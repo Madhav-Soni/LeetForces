@@ -18,8 +18,8 @@ export async function initLeetForcesPage(doc = document) {
     const context = extractProblemContext(doc);
     console.log('[LeetForces] Extracted Problem Context:', context);
 
-    // 2. Extract CSRF Token & Submission Form Fields
-    const formDetails = extractSubmissionFormDetails(doc);
+    // 2. Extract CSRF Token & Submission Form Fields (passing context for fallback canonical URLs)
+    const formDetails = extractSubmissionFormDetails(doc, context);
     console.log('[LeetForces] Extracted Form & CSRF Details:', formDetails);
 
     // 3. Submission Handler

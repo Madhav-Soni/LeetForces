@@ -167,8 +167,32 @@ function extractProblemContext(doc = document, currentUrl = window.location.href
  */
 
 /**
+ * Checks if a form element is a valid Codeforces solution submit form.
+ * @param {Element} form 
+ * @returns {boolean}
+ */
+function isValidSubmitForm(form) {
+    if (!form) return false;
+    const action = (form.getAttribute('action') || form.action || '').toLowerCase();
+
+    // Ignore known non-submission endpoints
+    const blacklistedActions = ['/data/problemtags', 'search', 'comment', 'vote', 'rating', 'login', 'logout'];
+    for (const item of blacklistedActions) {
+        if (action.includes(item)) return false;
+    }
+
+    // Must contain submit indicators
+    if (action.includes('submit') || action.includes('problem')) return true;
+    if (form.querySelector('select[name="programTypeId"], select[name="tab"], textarea[name="source"], input[name="sourceFile"]')) return true;
+    if (form.classList && (form.classList.contains('submit-form') || form.id === 'singlePageSubmitForm')) return true;
+
+    return false;
+}
+
+/**
  * Extracts submission form action, CSRF token, field names, and language options.
  * @param {Document} doc - Document object (defaults to window.document)
+ * @param {object} [context] - Extracted problem context ({ contestId, problemIndex })
  * @returns {{
  *   formFound: boolean,
  *   formAction: string|null,
@@ -182,34 +206,38 @@ function extractProblemContext(doc = document, currentUrl = window.location.href
  *   availableLanguages: Array<{ value: string, title: string, isSelected: boolean }>
  * }}
  */
-function extractSubmissionFormDetails(doc = document) {
-    // 1. Locate the submit form
-    const formSelectors = [
-        'form.submit-form',
-        'form[action*="/submit"]',
-        'form#singlePageSubmitForm',
-        'form[action*="problem"]',
-        'form[method="post"]'
-    ];
+function extractSubmissionFormDetails(doc = document, context = {}) {
+    // 1. Locate all forms and find the real submit form
+    const allForms = Array.from(doc.querySelectorAll('form'));
+    let submitForm = allForms.find(isValidSubmitForm) || null;
 
-    let submitForm = null;
-    for (const selector of formSelectors) {
-        submitForm = doc.querySelector(selector);
-        if (submitForm) break;
+    // Fallback: Check standard selectors if direct search didn't match
+    if (!submitForm) {
+        const fallbackSelectors = [
+            'form.submit-form',
+            'form[action*="submit"]',
+            'form#singlePageSubmitForm'
+        ];
+        for (const selector of fallbackSelectors) {
+            const el = doc.querySelector(selector);
+            if (el && isValidSubmitForm(el)) {
+                submitForm = el;
+                break;
+            }
+        }
     }
 
     // 2. Extract CSRF Token
     let csrfToken = null;
     let csrfFieldName = 'csrf_token';
 
-    // Check hidden input inside form or document
+    // Search inside submitForm or document for csrf input
     const csrfInput = (submitForm || doc).querySelector('input[name="csrf_token"], input[name="_csrf"]');
     if (csrfInput) {
         csrfToken = csrfInput.value;
         if (csrfInput.name) csrfFieldName = csrfInput.name;
     }
 
-    // Fallback: Check span/meta tags if hidden input not found
     if (!csrfToken) {
         const csrfSpan = doc.querySelector('.csrf-token, span[data-csrf]');
         if (csrfSpan) {
@@ -224,52 +252,74 @@ function extractSubmissionFormDetails(doc = document) {
         }
     }
 
-    // Fallback: window variable if available in DOM context
+    // Search scripts for inline _csrf or csrf_token assignment
+    if (!csrfToken) {
+        const scripts = doc.querySelectorAll('script');
+        for (const script of scripts) {
+            const text = script.textContent || '';
+            const match = text.match(/(?:csrf_token|_csrf)\s*[:=]\s*["']([a-f0-9]{32})["']/i);
+            if (match) {
+                csrfToken = match[1];
+                break;
+            }
+        }
+    }
+
     if (!csrfToken && typeof window !== 'undefined' && window._csrf) {
         csrfToken = window._csrf;
     }
 
-    // 3. Extract Field Names & Available Languages
+    // 3. Extract Field Names & Available Languages (check document-wide)
     let programTypeIdField = 'programTypeId';
     let problemCodeField = 'submittedProblemCode';
     let sourceField = 'source';
     const availableLanguages = [];
 
-    if (submitForm || doc) {
-        const root = submitForm || doc;
+    const root = doc; // Search document-wide for compiler select & fields
 
-        // Language Select Field
-        const langSelect = root.querySelector('select[name="programTypeId"], select[name="tab"]');
-        if (langSelect) {
-            if (langSelect.name) programTypeIdField = langSelect.name;
+    // Language Select Field
+    const langSelect = root.querySelector('select[name="programTypeId"], select[name="tab"]');
+    if (langSelect) {
+        if (langSelect.name) programTypeIdField = langSelect.name;
 
-            const options = langSelect.querySelectorAll('option');
-            options.forEach(opt => {
+        const options = langSelect.querySelectorAll('option');
+        options.forEach(opt => {
+            if (opt.value) {
                 availableLanguages.push({
                     value: opt.value,
                     title: opt.textContent.trim(),
                     isSelected: opt.selected
                 });
-            });
-        }
+            }
+        });
+    }
 
-        // Problem Code Field
-        const problemInput = root.querySelector('select[name="submittedProblemCode"], input[name="submittedProblemCode"]');
-        if (problemInput && problemInput.name) {
-            problemCodeField = problemInput.name;
-        }
+    // Problem Code Field
+    const problemInput = root.querySelector('select[name="submittedProblemCode"], input[name="submittedProblemCode"]');
+    if (problemInput && problemInput.name) {
+        problemCodeField = problemInput.name;
+    }
 
-        // Source Code Field
-        const sourceTextarea = root.querySelector('textarea[name="source"], textarea#sourceCodeTextarea, input[name="sourceFile"]');
-        if (sourceTextarea && sourceTextarea.name) {
-            sourceField = sourceTextarea.name;
+    // Source Code Field
+    const sourceTextarea = root.querySelector('textarea[name="source"], textarea#sourceCodeTextarea, input[name="sourceFile"]');
+    if (sourceTextarea && sourceTextarea.name) {
+        sourceField = sourceTextarea.name;
+    }
+
+    // 4. Determine canonical form action
+    let formAction = submitForm ? (submitForm.getAttribute('action') || submitForm.action) : null;
+    
+    // If formAction is missing, invalid, or points to unrelated path, construct canonical URL
+    if (!formAction || formAction.includes('problemTags') || !formAction.includes('submit')) {
+        if (context.contestId && context.problemIndex) {
+            formAction = `/contest/${context.contestId}/problem/${context.problemIndex}?action=submitSolutionFormProcessor`;
+        } else {
+            formAction = '/problemset/submit?action=submitSolutionFormProcessor';
         }
     }
 
-    const formAction = submitForm ? (submitForm.getAttribute('action') || submitForm.action) : null;
-
     return {
-        formFound: !!submitForm,
+        formFound: !!submitForm || availableLanguages.length > 0,
         formAction,
         csrfToken: csrfToken || null,
         fields: {
@@ -1316,8 +1366,8 @@ async function initLeetForcesPage(doc = document) {
     const context = extractProblemContext(doc);
     console.log('[LeetForces] Extracted Problem Context:', context);
 
-    // 2. Extract CSRF Token & Submission Form Fields
-    const formDetails = extractSubmissionFormDetails(doc);
+    // 2. Extract CSRF Token & Submission Form Fields (passing context for fallback canonical URLs)
+    const formDetails = extractSubmissionFormDetails(doc, context);
     console.log('[LeetForces] Extracted Form & CSRF Details:', formDetails);
 
     // 3. Submission Handler
