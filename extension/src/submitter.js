@@ -115,8 +115,11 @@ export async function submitSolutionToCodeforces(options, fetchImpl = (typeof fe
         return { success: false, submissionId: null, redirectUrl: null, error: 'Fetch API is not available', responseText: '' };
     }
 
-    // Determine target URL
-    let targetUrl = formAction || window.location.href;
+    // Determine target URL (always absolute against codeforces.com)
+    let targetUrl = formAction || (typeof window !== 'undefined' ? window.location.href : '');
+    if (targetUrl.startsWith('/')) {
+        targetUrl = `https://codeforces.com${targetUrl}`;
+    }
     if (!targetUrl.includes('action=submitSolutionFormProcessor')) {
         const separator = targetUrl.includes('?') ? '&' : '?';
         targetUrl += `${separator}action=submitSolutionFormProcessor`;

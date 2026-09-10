@@ -366,11 +366,16 @@ async function getSavedCode(problemKey) {
 
 async function saveCode(problemKey, code) {
     if (!problemKey) return;
+    if (typeof code !== 'string' || !code.trim()) return;
     const storageKey = STORAGE_KEYS.CODE_PREFIX + problemKey;
 
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         return new Promise(resolve => {
-            chrome.storage.local.set({ [storageKey]: code }, resolve);
+            try {
+                chrome.storage.local.set({ [storageKey]: code }, resolve);
+            } catch (_) {
+                resolve();
+            }
         });
     }
 
@@ -1009,8 +1014,11 @@ async function submitSolutionToCodeforces(options, fetchImpl = (typeof fetch !==
         return { success: false, submissionId: null, redirectUrl: null, error: 'Fetch API is not available', responseText: '' };
     }
 
-    // Determine target URL
-    let targetUrl = formAction || window.location.href;
+    // Determine target URL (always absolute against codeforces.com)
+    let targetUrl = formAction || (typeof window !== 'undefined' ? window.location.href : '');
+    if (targetUrl.startsWith('/')) {
+        targetUrl = `https://codeforces.com${targetUrl}`;
+    }
     if (!targetUrl.includes('action=submitSolutionFormProcessor')) {
         const separator = targetUrl.includes('?') ? '&' : '?';
         targetUrl += `${separator}action=submitSolutionFormProcessor`;
@@ -1618,9 +1626,10 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
 
 /* --- src/controlPanel.js --- */
 /**
- * LeetForces Control Panel
- * Floating LeetCode-style panel with its own code editor, language select, Run, and Submit.
- * Does not depend on Codeforces Ace (isolated-world safe).
+ * LeetForces Workspace
+ * LeetCode-style split view on Codeforces problem pages:
+ * left = problem statement, right = language + editor + Run/Submit + live verdicts.
+ * Submits through the logged-in Codeforces session — no file download/upload.
  */
 
 
@@ -1629,7 +1638,9 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
 
 
 
-const PANEL_ID = 'leetforces-control-panel';
+
+const WORKSPACE_ID = 'leetforces-workspace';
+const PANEL_ID = 'leetforces-control-panel'; // kept for tests / legacy queries
 const DEFAULT_LANG = 'GNU G++20 (64 bit)';
 
 function escapeHtml(str = '') {
@@ -1637,31 +1648,6 @@ function escapeHtml(str = '') {
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
-}
-
-function buildTestResultsHtml(results) {
-    if (!results || results.length === 0) return '';
-    return results.map(r => {
-        const color = r.passed ? '#22c55e' : (r.status === 'SKIPPED' ? '#64748b' : '#ef4444');
-        const label = r.passed ? 'PASS' : r.status.replace(/_/g, ' ');
-        const showDiff = !r.passed && r.status !== 'SKIPPED';
-        return `
-            <div style="border-left: 3px solid ${color}; padding: 6px 10px; margin-top: 6px; font-size: 0.78rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">
-                <div style="color:${color}; font-weight:700;">Test ${r.index}: ${label}</div>
-                ${showDiff ? `
-                    <div style="opacity:0.85; white-space: pre-wrap; margin-top:4px;">Expected:\n${escapeHtml(r.expected)}</div>
-                    <div style="opacity:0.85; white-space: pre-wrap; margin-top:4px;">Got:\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
-                ` : ''}
-            </div>
-        `;
-    }).join('');
-}
-
-function placeCursorInTextarea(textarea, line, col) {
-    if (!textarea || typeof textarea.setSelectionRange !== 'function') return;
-    const offset = computeCursorOffset(textarea.value || '', line, col);
-    if (typeof textarea.focus === 'function') textarea.focus();
-    textarea.setSelectionRange(offset, offset);
 }
 
 function el(doc, tag, attrs = {}, text) {
@@ -1688,203 +1674,372 @@ function el(doc, tag, attrs = {}, text) {
     return node;
 }
 
+function placeCursorInTextarea(textarea, line, col) {
+    try {
+        if (!textarea || typeof textarea.setSelectionRange !== 'function') return;
+        const offset = computeCursorOffset(String(textarea.value || ''), line, col);
+        if (typeof textarea.focus === 'function') textarea.focus();
+        textarea.setSelectionRange(offset, offset);
+    } catch (_) { /* ignore */ }
+}
+
+function safeSaveCode(problemKey, code) {
+    if (!problemKey || typeof code !== 'string' || !code.trim()) return;
+    try {
+        const p = saveCode(problemKey, code);
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (_) { /* ignore */ }
+}
+
+function buildTestResultsHtml(results) {
+    if (!results || results.length === 0) return '';
+    return results.map(r => {
+        const color = r.passed ? '#22c55e' : (r.status === 'SKIPPED' ? '#64748b' : '#ef4444');
+        const label = r.passed ? 'PASS' : String(r.status || '').replace(/_/g, ' ');
+        const showDiff = !r.passed && r.status !== 'SKIPPED';
+        return `
+            <div style="border-left:3px solid ${color}; padding:8px 10px; margin-top:8px; font-size:12px; font-family:ui-monospace,Menlo,monospace;">
+                <div style="color:${color}; font-weight:700;">Case ${r.index}: ${label}</div>
+                ${showDiff ? `
+                    <div style="opacity:0.9; white-space:pre-wrap; margin-top:4px; color:#cbd5e1;">Expected:\n${escapeHtml(r.expected)}</div>
+                    <div style="opacity:0.9; white-space:pre-wrap; margin-top:4px; color:#cbd5e1;">Output:\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+function renderLocalVerdict(container, verdictData = {}) {
+    if (!container) return;
+    const {
+        statusKey = 'TESTING',
+        formattedText = 'Testing...',
+        submissionId = null,
+        timeMs = 0,
+        memoryBytes = 0
+    } = verdictData;
+    const theme = getVerdictTheme(statusKey);
+    const memoryMb = memoryBytes ? (memoryBytes / (1024 * 1024)).toFixed(1) : null;
+
+    container.style.cssText = `
+        margin-top: 8px; padding: 12px 14px; border-radius: 10px;
+        background: ${theme.bgColor}; border: 1px solid ${theme.borderColor}; color: ${theme.color};
+        font-family: system-ui, -apple-system, sans-serif;
+    `;
+    container.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div style="font-weight:750; font-size:15px;">${theme.icon} ${escapeHtml(formattedText)}</div>
+            <span style="font-size:11px; font-weight:700; letter-spacing:0.04em; padding:3px 8px; border-radius:999px; background:${theme.borderColor};">${escapeHtml(theme.badgeLabel)}</span>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:12px; margin-top:8px; font-size:12px; opacity:0.95;">
+            ${submissionId ? `<span>Submission <strong>${escapeHtml(String(submissionId))}</strong></span>` : ''}
+            ${timeMs > 0 ? `<span>Time <strong>${timeMs} ms</strong></span>` : ''}
+            ${memoryMb ? `<span>Memory <strong>${memoryMb} MB</strong></span>` : ''}
+            ${theme.isPending ? `<span style="font-style:italic;">Polling Codeforces…</span>` : ''}
+        </div>
+    `;
+}
+
 /**
- * Injects the Run/Submit control panel into the page. Safe to call once;
- * subsequent calls return the existing panel instead of duplicating it.
- * @param {object} deps
+ * Injects LeetCode-style workspace. Safe to call multiple times (rebuilds).
  * @returns {Promise<HTMLElement>}
  */
 async function injectControlPanel({
     doc = document,
-    editor,
-    getEditor,
-    context,
-    formDetails,
+    context = {},
+    formDetails = {},
     submitSolution,
     pollVerdict,
     renderVerdict
 }) {
-    const existing = doc.getElementById(PANEL_ID);
-    if (existing) return existing;
+    const prev = doc.getElementById(WORKSPACE_ID) || doc.getElementById(PANEL_ID);
+    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
 
-    const resolvePageEditor = () => {
-        if (typeof getEditor === 'function') return getEditor();
-        return editor;
-    };
+    // Hide native CF chrome while workspace is active
+    const body = doc.body;
+    if (!body) throw new Error('document.body is not available');
 
-    const panel = el(doc, 'div', {
-        id: PANEL_ID,
+    if (!doc.getElementById('leetforces-hide-native')) {
+        const style = el(doc, 'style', { id: 'leetforces-hide-native' });
+        style.textContent = `
+            body.leetforces-active > *:not(#leetforces-workspace):not(script):not(style) { display: none !important; }
+            #leetforces-workspace, #leetforces-workspace * { box-sizing: border-box; }
+            #leetforces-workspace pre, #leetforces-workspace .problem-statement {
+                white-space: pre-wrap; word-break: break-word;
+            }
+            #leetforces-code-editor:focus { outline: 1px solid #38bdf8; outline-offset: -1px; }
+            #leetforces-run-btn:hover, #leetforces-submit-btn:hover { filter: brightness(1.08); }
+            #leetforces-run-btn:disabled, #leetforces-submit-btn:disabled { opacity: 0.65; cursor: wait; }
+        `;
+        (doc.head || body).appendChild(style);
+    }
+    if (body.classList && body.classList.add) body.classList.add('leetforces-active');
+    else body.className = `${body.className || ''} leetforces-active`.trim();
+
+    const workspace = el(doc, 'div', {
+        id: WORKSPACE_ID,
         style: `
-            position: fixed; bottom: 16px; right: 16px; z-index: 999999;
-            background: #0b1220; border: 1px solid #1e293b; border-radius: 14px;
-            padding: 12px; width: min(480px, calc(100vw - 24px)); max-height: min(78vh, 720px);
-            display: flex; flex-direction: column; gap: 8px;
+            position: fixed; inset: 0; z-index: 2147483000;
+            display: flex; flex-direction: column;
+            background: #0b1120; color: #e2e8f0;
             font-family: system-ui, -apple-system, Segoe UI, sans-serif;
-            box-shadow: 0 12px 40px rgba(0,0,0,0.55);
-            color: #e2e8f0;
         `
     });
 
-    const header = el(doc, 'div', {
-        style: 'display:flex; justify-content: space-between; align-items:center; gap:8px;'
+    // Also expose legacy panel id on inner shell for tests
+    const shell = el(doc, 'div', {
+        id: PANEL_ID,
+        style: 'display:flex; flex-direction:column; height:100%; min-height:0;'
     });
-    const titleWrap = el(doc, 'div', {
-        style: 'display:flex; align-items:baseline; gap:8px; min-width:0;'
+
+    // Top bar
+    const top = el(doc, 'div', {
+        style: `
+            flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+            gap:12px; padding:10px 14px; border-bottom:1px solid #1e293b; background:#0f172a;
+        `
     });
-    titleWrap.appendChild(el(doc, 'span', {
-        style: 'color:#f8fafc; font-weight:750; font-size:0.95rem;'
+    const topLeft = el(doc, 'div', { style: 'display:flex; align-items:baseline; gap:10px; min-width:0;' });
+    topLeft.appendChild(el(doc, 'span', {
+        style: 'font-weight:800; font-size:15px; color:#f8fafc; letter-spacing:0.02em;'
     }, 'LeetForces'));
-    titleWrap.appendChild(el(doc, 'span', {
-        style: 'color:#64748b; font-size:0.72rem;'
-    }, context.problemKey || ''));
-    const minimizeBtn = el(doc, 'button', {
-        id: 'leetforces-minimize-btn',
+    topLeft.appendChild(el(doc, 'span', {
+        style: 'font-size:13px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'
+    }, context.problemName
+        ? `${context.problemIndex || ''}. ${context.problemName}`
+        : (context.problemKey || 'Problem')));
+    const topRight = el(doc, 'div', { style: 'display:flex; align-items:center; gap:8px;' });
+    const classicBtn = el(doc, 'button', {
+        id: 'leetforces-classic-btn',
         type: 'button',
-        style: 'background:#1e293b; border:1px solid #334155; color:#94a3b8; border-radius:8px; width:28px; height:28px; cursor:pointer; font-size:14px; line-height:1;'
-    }, '−');
-    header.appendChild(titleWrap);
-    header.appendChild(minimizeBtn);
+        style: 'background:#1e293b; border:1px solid #334155; color:#cbd5e1; border-radius:8px; padding:7px 10px; font-size:12px; cursor:pointer;'
+    }, 'Classic CF');
+    topRight.appendChild(classicBtn);
+    top.appendChild(topLeft);
+    top.appendChild(topRight);
+
+    // Main split
+    const main = el(doc, 'div', {
+        style: 'flex:1 1 auto; display:flex; min-height:0;'
+    });
+
+    // Left: problem
+    const left = el(doc, 'div', {
+        id: 'leetforces-problem-pane',
+        style: `
+            flex: 1 1 48%; min-width: 280px; max-width: 55%;
+            overflow: auto; padding: 18px 20px 28px;
+            background: #111827; border-right: 1px solid #1e293b;
+            color: #e5e7eb; font-size: 14px; line-height: 1.55;
+        `
+    });
+    left.appendChild(el(doc, 'div', {
+        style: 'font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:12px;'
+    }, 'Problem'));
+
+    const statement = doc.querySelector && doc.querySelector('.problem-statement');
+    if (statement && typeof statement.cloneNode === 'function') {
+        const clone = statement.cloneNode(true);
+        // neutralize CF absolute positioning quirks
+        if (clone.style) clone.style.cssText = 'position:static; width:auto; max-width:100%;';
+        left.appendChild(clone);
+    } else {
+        left.appendChild(el(doc, 'div', { style: 'color:#94a3b8;' },
+            'Problem statement could not be cloned. Use Classic CF to read it on the original page.'));
+    }
+
+    // Right: IDE
+    const right = el(doc, 'div', {
+        style: 'flex:1 1 52%; min-width:320px; display:flex; flex-direction:column; min-height:0; background:#0b1120;'
+    });
+
+    const toolbar = el(doc, 'div', {
+        style: `
+            flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+            padding:10px 12px; border-bottom:1px solid #1e293b; background:#0f172a;
+        `
+    });
 
     const langSelect = el(doc, 'select', {
         id: 'leetforces-lang-select',
-        style: 'background:#111827; border:1px solid #334155; color:#e2e8f0; border-radius:8px; padding:8px 10px; font-size:0.8rem; width:100%; font-family:inherit;'
+        style: `
+            flex:1 1 220px; min-width:180px; background:#111827; border:1px solid #334155;
+            color:#e2e8f0; border-radius:8px; padding:8px 10px; font-size:13px;
+        `
     });
+
+    const runBtn = el(doc, 'button', {
+        id: 'leetforces-run-btn',
+        type: 'button',
+        style: `
+            flex:0 0 auto; padding:8px 14px; border:none; border-radius:8px;
+            background:#334155; color:#f8fafc; font-weight:700; font-size:13px; cursor:pointer;
+        `
+    }, 'Run');
+
+    const submitBtn = el(doc, 'button', {
+        id: 'leetforces-submit-btn',
+        type: 'button',
+        style: `
+            flex:0 0 auto; padding:8px 16px; border:none; border-radius:8px;
+            background:#22c55e; color:#052e16; font-weight:800; font-size:13px; cursor:pointer;
+        `
+    }, 'Submit');
+
+    toolbar.appendChild(langSelect);
+    toolbar.appendChild(runBtn);
+    toolbar.appendChild(submitBtn);
 
     const codeEditor = el(doc, 'textarea', {
         id: 'leetforces-code-editor',
         spellcheck: 'false',
         style: `
-            background:#020617; border:1px solid #1e293b; color:#e2e8f0; border-radius:10px;
-            padding:10px 12px; font-size:12.5px; line-height:1.45; width:100%; min-height:220px; height:260px;
-            resize:vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-            tab-size:4; white-space:pre; overflow:auto; box-sizing:border-box;
+            flex:1 1 auto; min-height:220px; width:100%; resize:none; border:none;
+            padding:14px 16px; background:#020617; color:#e2e8f0;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size:13px; line-height:1.5; tab-size:4; white-space:pre; overflow:auto;
         `
     });
 
-    const btnRow = el(doc, 'div', { style: 'display:flex; gap:8px;' });
-    const runBtn = el(doc, 'button', {
-        id: 'leetforces-run-btn',
-        type: 'button',
-        style: 'flex:1; padding:10px; border:none; border-radius:8px; background:#334155; color:#f8fafc; font-weight:700; cursor:pointer;'
-    }, 'Run');
-    const submitBtn = el(doc, 'button', {
-        id: 'leetforces-submit-btn',
-        type: 'button',
-        style: 'flex:1; padding:10px; border:none; border-radius:8px; background:#22c55e; color:#052e16; font-weight:700; cursor:pointer;'
-    }, 'Submit');
-    btnRow.appendChild(runBtn);
-    btnRow.appendChild(submitBtn);
-
-    const runResultsEl = el(doc, 'div', {
-        id: 'leetforces-run-results',
-        style: 'overflow:auto; max-height:160px;'
+    const consolePane = el(doc, 'div', {
+        id: 'leetforces-console',
+        style: `
+            flex:0 0 34%; min-height:140px; max-height:42%; overflow:auto;
+            border-top:1px solid #1e293b; background:#0f172a; padding:12px 14px;
+        `
     });
+    consolePane.appendChild(el(doc, 'div', {
+        style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:6px;'
+    }, 'Console'));
+    const runResultsEl = el(doc, 'div', { id: 'leetforces-run-results' });
     const verdictEl = el(doc, 'div', { id: 'leetforces-verdict-panel' });
+    consolePane.appendChild(runResultsEl);
+    consolePane.appendChild(verdictEl);
 
-    panel.appendChild(header);
-    panel.appendChild(langSelect);
-    panel.appendChild(codeEditor);
-    panel.appendChild(btnRow);
-    panel.appendChild(runResultsEl);
-    panel.appendChild(verdictEl);
-    doc.body.appendChild(panel);
+    right.appendChild(toolbar);
+    right.appendChild(codeEditor);
+    right.appendChild(consolePane);
 
-    // Language: prefer saved choice, else G++20 — ignore CF form's random selected option
-    const savedLang = await getPreferredLanguage();
-    const preferredLang = savedLang || DEFAULT_LANG;
-    populateLanguageSelector(langSelect, formDetails.availableLanguages, preferredLang);
+    main.appendChild(left);
+    main.appendChild(right);
+
+    shell.appendChild(top);
+    shell.appendChild(main);
+    workspace.appendChild(shell);
+    body.appendChild(workspace);
+
+    // Language default: saved → G++20 (ignore CF page selection)
+    let preferredLang = DEFAULT_LANG;
+    try {
+        const savedLang = await getPreferredLanguage();
+        if (savedLang) preferredLang = savedLang;
+    } catch (_) { /* ignore */ }
+
+    populateLanguageSelector(
+        langSelect,
+        (formDetails && formDetails.availableLanguages) || [],
+        preferredLang
+    );
 
     langSelect.addEventListener('change', () => {
-        const selectedText = langSelect.options[langSelect.selectedIndex]?.text;
-        if (selectedText) savePreferredLanguage(selectedText);
+        try {
+            const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
+            if (opt && opt.text) savePreferredLanguage(opt.text);
+        } catch (_) { /* ignore */ }
     });
 
-    // Load saved code or C++ template into the panel editor
+    // Code
     const problemKey = context.problemKey || '';
     let initialCode = DEFAULT_CPP_TEMPLATE;
-    if (problemKey) {
-        const saved = await getSavedCode(problemKey);
-        if (saved && saved.trim().length > 0) initialCode = saved;
-        else await saveCode(problemKey, initialCode);
-    }
+    try {
+        if (problemKey) {
+            const saved = await getSavedCode(problemKey);
+            if (typeof saved === 'string' && saved.trim()) initialCode = saved;
+            else safeSaveCode(problemKey, initialCode);
+        }
+    } catch (_) { /* ignore */ }
     codeEditor.value = initialCode;
-
-    if (initialCode === DEFAULT_CPP_TEMPLATE) {
-        setTimeout(() => placeCursorInTextarea(codeEditor, DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN), 30);
+    if (!String(codeEditor.value || '').trim()) codeEditor.value = DEFAULT_CPP_TEMPLATE;
+    if (String(codeEditor.value) === DEFAULT_CPP_TEMPLATE) {
+        setTimeout(() => placeCursorInTextarea(codeEditor, DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN), 40);
     }
 
     let saveTimer = null;
-    const persistCode = () => {
-        if (!problemKey) return;
-        const code = codeEditor.value;
-        saveCode(problemKey, code);
-        const pageEditor = resolvePageEditor();
-        if (pageEditor && pageEditor.instance) {
-            try { setEditorValue(pageEditor, code); } catch (_) { /* ignore */ }
-        }
-    };
+    const persistCode = () => safeSaveCode(problemKey, String(codeEditor.value || ''));
     codeEditor.addEventListener('input', () => {
         if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(persistCode, 350);
+        saveTimer = setTimeout(persistCode, 300);
     });
-
     codeEditor.addEventListener('keydown', (e) => {
         if (!e || e.key !== 'Tab') return;
         e.preventDefault();
-        const start = codeEditor.selectionStart ?? codeEditor.value.length;
-        const end = codeEditor.selectionEnd ?? start;
-        const value = codeEditor.value || '';
-        codeEditor.value = value.slice(0, start) + '    ' + value.slice(end);
-        codeEditor.selectionStart = codeEditor.selectionEnd = start + 4;
-        codeEditor.dispatchEvent(new Event('input', { bubbles: true }));
+        try {
+            const start = codeEditor.selectionStart != null ? codeEditor.selectionStart : String(codeEditor.value || '').length;
+            const end = codeEditor.selectionEnd != null ? codeEditor.selectionEnd : start;
+            const value = String(codeEditor.value || '');
+            codeEditor.value = `${value.slice(0, start)}    ${value.slice(end)}`;
+            codeEditor.selectionStart = codeEditor.selectionEnd = start + 4;
+            persistCode();
+        } catch (_) { /* ignore */ }
     });
 
-    let minimized = false;
-    minimizeBtn.addEventListener('click', () => {
-        minimized = !minimized;
-        [langSelect, codeEditor, btnRow, runResultsEl, verdictEl].forEach(node => {
-            if (node) node.style.display = minimized ? 'none' : (node === btnRow ? 'flex' : '');
-        });
-        minimizeBtn.textContent = minimized ? '+' : '−';
+    classicBtn.addEventListener('click', () => {
+        try {
+            if (body.classList && body.classList.remove) body.classList.remove('leetforces-active');
+            if (workspace.parentNode) workspace.parentNode.removeChild(workspace);
+        } catch (_) { /* ignore */ }
     });
 
     const getSelectedLangTitle = () => {
-        return langSelect.options[langSelect.selectedIndex]?.text || DEFAULT_LANG;
+        try {
+            const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
+            return (opt && opt.text) || DEFAULT_LANG;
+        } catch (_) {
+            return DEFAULT_LANG;
+        }
     };
 
-    const getSourceCode = () => (codeEditor.value || '').trimEnd();
+    const getSourceCode = () => {
+        let code = '';
+        try { code = String(codeEditor.value != null ? codeEditor.value : ''); } catch (_) { code = ''; }
+        if (!code.trim()) {
+            code = DEFAULT_CPP_TEMPLATE;
+            try { codeEditor.value = code; } catch (_) { /* ignore */ }
+        }
+        return code.replace(/\s+$/, '');
+    };
+
+    const showVerdict = (data) => {
+        if (typeof renderVerdict === 'function') {
+            try { renderVerdict(verdictEl, data); return; } catch (_) { /* fall through */ }
+        }
+        renderLocalVerdict(verdictEl, data);
+    };
 
     runBtn.addEventListener('click', async () => {
         runBtn.disabled = true;
-        runBtn.textContent = 'Running...';
+        runBtn.textContent = 'Running…';
         runResultsEl.innerHTML = '';
         verdictEl.innerHTML = '';
-
         try {
             const sourceCode = getSourceCode();
-            if (!sourceCode.trim()) {
-                runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:0.8rem;">Source code is empty</div>`;
-                return;
-            }
-
             const { overallPassed, results, error } = await runSampleTests({
                 languageTitle: getSelectedLangTitle(),
                 sourceCode,
-                sampleTests: context.sampleTests
+                sampleTests: (context && context.sampleTests) || []
             });
-
             if (error) {
-                runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:0.8rem; margin-top:4px;">${escapeHtml(error)}</div>`;
+                runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:13px;">${escapeHtml(error)}</div>`;
             } else {
                 runResultsEl.innerHTML = `
-                    <div style="color:${overallPassed ? '#22c55e' : '#ef4444'}; font-weight:700; font-size:0.85rem; margin-top:4px;">
-                        ${overallPassed ? `All ${results.length} sample test(s) passed` : 'Some sample tests failed'}
+                    <div style="color:${overallPassed ? '#22c55e' : '#ef4444'}; font-weight:700; font-size:13px;">
+                        ${overallPassed ? `Accepted on all ${results.length} sample(s)` : 'Sample tests failed'}
                     </div>
                     ${buildTestResultsHtml(results)}
                 `;
             }
         } catch (err) {
-            runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:0.8rem;">${escapeHtml(err.message || 'Run failed')}</div>`;
+            runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:13px;">${escapeHtml((err && err.message) || 'Run failed')}</div>`;
         } finally {
             runBtn.disabled = false;
             runBtn.textContent = 'Run';
@@ -1893,50 +2048,59 @@ async function injectControlPanel({
 
     submitBtn.addEventListener('click', async () => {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Submitting...';
+        submitBtn.textContent = 'Submitting…';
+        runResultsEl.innerHTML = '';
         verdictEl.innerHTML = '';
-
         try {
             const sourceCode = getSourceCode();
-            if (!sourceCode.trim()) {
-                verdictEl.innerHTML = `<div style="color:#ef4444; font-size:0.85rem; padding:8px 0;">Submission failed: Source code is empty</div>`;
-                return;
-            }
-
             persistCode();
 
-            const result = await submitSolution(sourceCode, getSelectedLangTitle());
+            if (typeof submitSolution !== 'function') {
+                throw new Error('Submit handler missing. Reload the extension and refresh this page.');
+            }
 
-            if (!result.success) {
-                verdictEl.innerHTML = `<div style="color:#ef4444; font-size:0.85rem; padding:8px 0;">Submission failed: ${escapeHtml(result.error || 'unknown error')}</div>`;
+            showVerdict({ statusKey: 'TESTING', formattedText: 'Submitting to Codeforces…' });
+
+            const result = await submitSolution(sourceCode, getSelectedLangTitle());
+            if (!result || !result.success) {
+                showVerdict({
+                    statusKey: 'WRONG_ANSWER',
+                    formattedText: `Submission failed: ${(result && result.error) || 'unknown error'}`
+                });
+                // Override badge-ish styling for submit errors
+                verdictEl.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:4px 0;">Submission failed: ${escapeHtml((result && result.error) || 'unknown error')}</div>`;
                 return;
             }
 
-            renderVerdict(verdictEl, { statusKey: 'TESTING', formattedText: 'Submitted, waiting for verdict...' });
-
-            await pollVerdict({
-                submissionId: result.submissionId,
-                onUpdate: (verdictData) => renderVerdict(verdictEl, verdictData)
+            showVerdict({
+                statusKey: 'TESTING',
+                formattedText: 'In queue… waiting for verdict',
+                submissionId: result.submissionId
             });
+
+            if (typeof pollVerdict === 'function') {
+                await pollVerdict({
+                    submissionId: result.submissionId,
+                    onUpdate: (verdictData) => showVerdict(verdictData)
+                });
+            }
         } catch (err) {
-            verdictEl.innerHTML = `<div style="color:#ef4444; font-size:0.85rem; padding:8px 0;">${escapeHtml(err.message || 'Submit failed')}</div>`;
+            verdictEl.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:4px 0;">${escapeHtml((err && err.message) || 'Submit failed')}</div>`;
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = 'Submit';
         }
     });
 
-    return panel;
+    return shell;
 }
 
 
 /* --- src/content.js --- */
 /**
  * Main Content Script for LeetForces
- * Orchestrates Problem Context Extraction, CSRF & Submit Form Extraction, Editor Initialization, Solution Submission, and Real-Time Verdict Polling.
- * Strictly uses ZERO personal user data.
+ * Orchestrates context extraction, form extraction, floating panel, submit, and verdict polling.
  */
-
 
 
 
@@ -1947,108 +2111,85 @@ async function injectControlPanel({
 
 
 async function initLeetForcesPage(doc = document) {
-    console.log('[LeetForces] Initializing problem page script...');
+    try {
+        console.log('[LeetForces] Initializing problem page script...');
 
-    // 1. Extract Problem Context
-    const context = extractProblemContext(doc);
-    console.log('[LeetForces] Extracted Problem Context:', context);
+        const context = extractProblemContext(doc);
+        console.log('[LeetForces] Extracted Problem Context:', context);
 
-    // 2. Extract CSRF Token & Submission Form Fields (passing context for fallback canonical URLs)
-    const formDetails = extractSubmissionFormDetails(doc, context);
-    console.log('[LeetForces] Extracted Form & CSRF Details:', formDetails);
+        const formDetails = extractSubmissionFormDetails(doc, context);
+        console.log('[LeetForces] Extracted Form & CSRF Details:', formDetails);
 
-    // 3. Submission Handler
-    const submitHandler = async (sourceCode, preferredLang = 'GNU G++20 (64 bit)') => {
-        const programTypeId = resolveLanguageId(preferredLang, formDetails.availableLanguages);
-        return submitSolutionToCodeforces({
-            formAction: formDetails.formAction,
-            csrfToken: formDetails.csrfToken,
-            fields: formDetails.fields,
-            programTypeId,
-            problemCode: context.problemIndex || 'A',
-            sourceCode
-        });
-    };
-
-    // Store extracted data and helper functions in window object
-    if (typeof window !== 'undefined') {
-        window.__LEETFORCES_DATA__ = {
-            context,
-            formDetails,
-            compilerMap: KNOWN_COMPILER_MAP,
-            resolveLanguageId: (lang) => resolveLanguageId(lang, formDetails.availableLanguages),
-            populateLanguageSelector: (selectEl, pref) => populateLanguageSelector(selectEl, formDetails.availableLanguages, pref),
-            submitSolution: submitHandler,
-            pollVerdict: (opts) => pollVerdictForSubmission({ ...opts, contestId: context.contestId, problemIndex: context.problemIndex }),
-            renderVerdict: renderVerdictPanel,
-            getVerdictTheme,
-            formatVerdict,
-            timestamp: Date.now()
-        };
-    }
-
-    // Mutable editor ref so the panel can use it once detection succeeds
-    const editorRef = { current: { type: 'unknown', element: null, instance: null } };
-
-    // 4. Always show the floating panel (do not wait for Ace)
-    if (context.problemKey) {
-        await injectControlPanel({
-            doc,
-            getEditor: () => editorRef.current,
-            context,
-            formDetails,
-            submitSolution: submitHandler,
-            pollVerdict: (opts) => pollVerdictForSubmission({ ...opts, contestId: context.contestId, problemIndex: context.problemIndex }),
-            renderVerdict: renderVerdictPanel
-        });
-        console.log('[LeetForces] Control panel injected.');
-    }
-
-    // 5. Detect Editor & Initialize Code Template / Cursor Position (retry — Ace loads late)
-    if (context.problemKey) {
-        let attempts = 0;
-        const maxAttempts = 40; // ~12s with 300ms interval
-        let initialized = false;
-
-        const attemptEditorInit = async () => {
-            const editor = detectEditor(doc);
-            if (editor.type !== 'unknown' && editor.instance) {
-                editorRef.current = editor;
-                console.log(`[LeetForces] Detected editor type: ${editor.type}${editor.bridgeType ? ` (${editor.bridgeType})` : ''}`);
-                if (!initialized) {
-                    const result = await initializeProblemEditor(context.problemKey, editor);
-                    initialized = true;
-                    console.log(`[LeetForces] Editor initialized for problem '${context.problemKey}'. New problem: ${result.isNewProblem}`);
-                }
-                return true;
-            }
-            return false;
+        const submitHandler = async (sourceCode, preferredLang = 'GNU G++20 (64 bit)') => {
+            const programTypeId = resolveLanguageId(
+                preferredLang,
+                (formDetails && formDetails.availableLanguages) || []
+            );
+            return submitSolutionToCodeforces({
+                formAction: formDetails.formAction,
+                csrfToken: formDetails.csrfToken,
+                fields: formDetails.fields || {},
+                programTypeId,
+                problemCode: (context && context.problemIndex) || 'A',
+                sourceCode
+            });
         };
 
-        const success = await attemptEditorInit();
-        if (!success) {
-            const interval = setInterval(async () => {
-                attempts++;
-                const ok = await attemptEditorInit();
-                if (ok || attempts >= maxAttempts) {
-                    clearInterval(interval);
-                    if (!ok) {
-                        console.warn('[LeetForces] Editor not detected after retries. Panel is still available; open the submit box / wait for Ace to load.');
-                    }
-                }
-            }, 300);
+        if (typeof window !== 'undefined') {
+            window.__LEETFORCES_DATA__ = {
+                context,
+                formDetails,
+                compilerMap: KNOWN_COMPILER_MAP,
+                resolveLanguageId: (lang) => resolveLanguageId(lang, (formDetails && formDetails.availableLanguages) || []),
+                populateLanguageSelector: (selectEl, pref) => populateLanguageSelector(selectEl, (formDetails && formDetails.availableLanguages) || [], pref),
+                submitSolution: submitHandler,
+                pollVerdict: (opts) => pollVerdictForSubmission({
+                    ...opts,
+                    contestId: context.contestId,
+                    problemIndex: context.problemIndex
+                }),
+                renderVerdict: renderVerdictPanel,
+                getVerdictTheme,
+                formatVerdict,
+                timestamp: Date.now()
+            };
         }
-    }
 
-    return { context, formDetails, submitHandler };
+        if (context && context.problemKey) {
+            await injectControlPanel({
+                doc,
+                context,
+                formDetails,
+                submitSolution: submitHandler,
+                pollVerdict: (opts) => pollVerdictForSubmission({
+                    ...opts,
+                    contestId: context.contestId,
+                    problemIndex: context.problemIndex
+                }),
+                renderVerdict: renderVerdictPanel
+            });
+            console.log('[LeetForces] Control panel injected.');
+        } else {
+            console.warn('[LeetForces] No problemKey extracted; panel not injected.');
+        }
+
+        return { context, formDetails, submitHandler };
+    } catch (err) {
+        console.error('[LeetForces] Failed to initialize:', err);
+        return { context: null, formDetails: null, submitHandler: null, error: err };
+    }
 }
 
-// Auto-run on content script load if in browser environment
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+    const boot = () => {
+        initLeetForcesPage(document).catch((err) => {
+            console.error('[LeetForces] Boot error:', err);
+        });
+    };
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => initLeetForcesPage(document));
+        document.addEventListener('DOMContentLoaded', boot);
     } else {
-        initLeetForcesPage(document);
+        boot();
     }
 }
 

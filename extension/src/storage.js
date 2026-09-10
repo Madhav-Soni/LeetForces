@@ -29,11 +29,16 @@ export async function getSavedCode(problemKey) {
 
 export async function saveCode(problemKey, code) {
     if (!problemKey) return;
+    if (typeof code !== 'string' || !code.trim()) return;
     const storageKey = STORAGE_KEYS.CODE_PREFIX + problemKey;
 
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         return new Promise(resolve => {
-            chrome.storage.local.set({ [storageKey]: code }, resolve);
+            try {
+                chrome.storage.local.set({ [storageKey]: code }, resolve);
+            } catch (_) {
+                resolve();
+            }
         });
     }
 

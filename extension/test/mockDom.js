@@ -69,6 +69,13 @@ class MockElement {
         return child;
     }
 
+    removeChild(child) {
+        const idx = this.children.indexOf(child);
+        if (idx >= 0) this.children.splice(idx, 1);
+        if (child) child.parent = null;
+        return child;
+    }
+
     querySelector(selector) {
         const results = this.querySelectorAll(selector);
         return results.length > 0 ? results[0] : null;
