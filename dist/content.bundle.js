@@ -333,6 +333,31 @@ function extractSubmissionFormDetails(doc = document, context = {}) {
 }
 
 
+/* --- src/handleExtractor.js --- */
+/**
+ * Codeforces Handle Extractor
+ * Extracts the currently logged-in user's handle from the page header,
+ * needed to poll their own submission list for verdicts.
+ */
+
+/**
+ * @param {Document} doc
+ * @returns {string|null}
+ */
+function extractLoggedInHandle(doc = document) {
+    // The header's profile link is the reliable place to look; other
+    // /profile/ links on the page (comments, standings) are not the viewer.
+    const header = doc.querySelector('#header') || doc;
+    const link = header.querySelector('a[href^="/profile/"]');
+    if (link) {
+        const match = link.getAttribute('href').match(/\/profile\/([^/?#]+)/);
+        if (match) return decodeURIComponent(match[1]);
+        if (link.textContent) return link.textContent.trim();
+    }
+    return null;
+}
+
+
 /* --- src/storage.js --- */
 /**
  * Storage Abstraction for LeetForces
@@ -951,6 +976,169 @@ async function submitSolutionToCodeforces(options, fetchImpl = (typeof fetch !==
 }
 
 
+/* --- src/testRunner.js --- */
+/**
+ * Local Test Runner
+ * Executes user code against extracted sample tests using the Piston public execution API
+ * (https://github.com/engineer-man/piston). Free, no API key required.
+ */
+
+const PISTON_EXECUTE_URL = 'https://emkc.org/api/v2/piston/execute';
+
+// Maps Codeforces compiler titles to Piston language identifiers.
+// Order matters: more specific patterns should come first.
+const CF_TO_PISTON_LANGUAGE = [
+    { match: /g\+\+|gnu c\+\+|clang\+\+/i, language: 'cpp' },
+    { match: /pypy|python/i, language: 'python' },
+    { match: /java\b/i, language: 'java' },
+    { match: /kotlin/i, language: 'kotlin' },
+    { match: /rust/i, language: 'rust' },
+    { match: /^go\b|golang/i, language: 'go' },
+    { match: /c#|mono/i, language: 'csharp' },
+    { match: /javascript|node\.js/i, language: 'javascript' }
+];
+
+/**
+ * Resolves a Piston language identifier from a Codeforces compiler title.
+ * @param {string} languageTitle - e.g. "GNU G++20 (64 bit)"
+ * @returns {string|null}
+ */
+function resolvePistonLanguage(languageTitle = '') {
+    const entry = CF_TO_PISTON_LANGUAGE.find(e => e.match.test(languageTitle));
+    return entry ? entry.language : null;
+}
+
+/**
+ * Normalizes output for comparison: unifies line endings, strips trailing
+ * whitespace per line, and drops trailing blank lines. Codeforces judges
+ * ignore trailing whitespace, so local comparison should too.
+ * @param {string} text
+ * @returns {string}
+ */
+function normalizeOutput(text = '') {
+    return text
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .map(line => line.replace(/[ \t]+$/g, ''))
+        .join('\n')
+        .replace(/\n+$/, '');
+}
+
+/**
+ * Executes source code once against a single stdin input via Piston.
+ * @param {object} options
+ * @param {string} options.language - Piston language identifier
+ * @param {string} options.sourceCode
+ * @param {string} options.input
+ * @param {function} fetchImpl
+ * @returns {Promise<object>} Raw Piston response
+ */
+async function runSingleTest({ language, sourceCode, input }, fetchImpl = (typeof fetch !== 'undefined' ? fetch : null)) {
+    if (!fetchImpl) throw new Error('Fetch API is not available');
+
+    const response = await fetchImpl(PISTON_EXECUTE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            language,
+            version: '*',
+            files: [{ content: sourceCode }],
+            stdin: input || ''
+        })
+    });
+
+    if (!response.ok) {
+        throw new Error(`Piston API error: HTTP ${response.status}`);
+    }
+
+    return response.json();
+}
+
+/**
+ * Runs source code against all extracted sample tests, sequentially.
+ * @param {object} options
+ * @param {string} options.languageTitle - Human readable CF language (e.g. "GNU G++20 (64 bit)")
+ * @param {string} options.sourceCode
+ * @param {Array<{input:string, output:string}>} options.sampleTests
+ * @param {function} [fetchImpl]
+ * @returns {Promise<{
+ *   overallPassed: boolean,
+ *   results: Array<{index:number, passed:boolean, status:string, expected:string, actual:string, stderr:string}>,
+ *   error: string|null
+ * }>}
+ */
+async function runSampleTests({ languageTitle, sourceCode, sampleTests = [] }, fetchImpl = (typeof fetch !== 'undefined' ? fetch : null)) {
+    const language = resolvePistonLanguage(languageTitle);
+    if (!language) {
+        return { overallPassed: false, results: [], error: `Unsupported language for local run: "${languageTitle}"` };
+    }
+    if (!sourceCode || !sourceCode.trim()) {
+        return { overallPassed: false, results: [], error: 'Source code is empty' };
+    }
+    if (!sampleTests || sampleTests.length === 0) {
+        return { overallPassed: false, results: [], error: 'No sample tests were found on this page' };
+    }
+
+    const results = [];
+
+    for (let i = 0; i < sampleTests.length; i++) {
+        const test = sampleTests[i];
+
+        try {
+            const execResult = await runSingleTest({ language, sourceCode, input: test.input }, fetchImpl);
+
+            const compileFailed = execResult.compile && execResult.compile.code !== 0;
+            if (compileFailed) {
+                results.push({
+                    index: i + 1,
+                    passed: false,
+                    status: 'COMPILATION_ERROR',
+                    expected: test.output,
+                    actual: '',
+                    stderr: execResult.compile.stderr || execResult.compile.output || ''
+                });
+                for (let j = i + 1; j < sampleTests.length; j++) {
+                    results.push({ index: j + 1, passed: false, status: 'SKIPPED', expected: sampleTests[j].output, actual: '', stderr: '' });
+                }
+                break;
+            }
+
+            const run = execResult.run || {};
+            const actualOutput = run.stdout || '';
+            const passed = normalizeOutput(actualOutput) === normalizeOutput(test.output);
+
+            let status = 'WRONG_ANSWER';
+            if (passed) {
+                status = 'PASSED';
+            } else if (run.signal || (run.code !== 0 && run.code !== null)) {
+                status = 'RUNTIME_ERROR';
+            }
+
+            results.push({
+                index: i + 1,
+                passed,
+                status,
+                expected: test.output,
+                actual: actualOutput,
+                stderr: run.stderr || ''
+            });
+        } catch (err) {
+            results.push({
+                index: i + 1,
+                passed: false,
+                status: 'ERROR',
+                expected: test.output,
+                actual: '',
+                stderr: err.message || String(err)
+            });
+        }
+    }
+
+    const overallPassed = results.length > 0 && results.every(r => r.passed);
+    return { overallPassed, results, error: null };
+}
+
+
 /* --- src/verdictPoller.js --- */
 /**
  * Codeforces Verdict Poller Engine
@@ -1345,11 +1533,174 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
 }
 
 
+/* --- src/controlPanel.js --- */
+/**
+ * LeetForces Control Panel
+ * Injects a floating Run/Submit control bar into Codeforces problem pages.
+ */
+
+
+
+
+const PANEL_ID = 'leetforces-control-panel';
+
+function escapeHtml(str = '') {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function buildTestResultsHtml(results) {
+    if (!results || results.length === 0) return '';
+    return results.map(r => {
+        const color = r.passed ? '#22c55e' : (r.status === 'SKIPPED' ? '#64748b' : '#ef4444');
+        const label = r.passed ? 'PASS' : r.status.replace(/_/g, ' ');
+        const showDiff = !r.passed && r.status !== 'SKIPPED';
+        return `
+            <div style="border-left: 3px solid ${color}; padding: 6px 10px; margin-top: 6px; font-size: 0.78rem; font-family: monospace;">
+                <div style="color:${color}; font-weight:700;">Test ${r.index}: ${label}</div>
+                ${showDiff ? `
+                    <div style="opacity:0.85; white-space: pre-wrap; margin-top:4px;">Expected:\n${escapeHtml(r.expected)}</div>
+                    <div style="opacity:0.85; white-space: pre-wrap; margin-top:4px;">Got:\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+function getSelectedLanguageTitle(formDetails) {
+    const selected = (formDetails.availableLanguages || []).find(l => l.isSelected);
+    return selected ? selected.title : 'GNU G++20 (64 bit)';
+}
+
+/**
+ * Injects the Run/Submit control panel into the page. Safe to call once;
+ * subsequent calls return the existing panel instead of duplicating it.
+ * @param {object} deps
+ * @returns {HTMLElement}
+ */
+function injectControlPanel({
+    doc = document,
+    editor,
+    context,
+    formDetails,
+    handle,
+    submitSolution,
+    pollVerdict,
+    renderVerdict
+}) {
+    const existing = doc.getElementById(PANEL_ID);
+    if (existing) return existing;
+
+    const panel = doc.createElement('div');
+    panel.id = PANEL_ID;
+    panel.style.cssText = `
+        position: fixed; bottom: 20px; right: 20px; z-index: 999999;
+        background: #0f172a; border: 1px solid #1e293b; border-radius: 12px;
+        padding: 14px; width: 360px; max-height: 70vh; overflow-y: auto;
+        font-family: system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    `;
+
+    panel.innerHTML = `
+        <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom:10px;">
+            <span style="color:#e2e8f0; font-weight:700; font-size:0.9rem;">LeetForces</span>
+            <span style="color:#64748b; font-size:0.75rem;">${escapeHtml(context.problemKey || '')}</span>
+        </div>
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <button id="leetforces-run-btn" style="flex:1; padding:10px; border:none; border-radius:8px; background:#334155; color:#e2e8f0; font-weight:700; cursor:pointer;">Run</button>
+            <button id="leetforces-submit-btn" style="flex:1; padding:10px; border:none; border-radius:8px; background:#22c55e; color:#052e16; font-weight:700; cursor:pointer;">Submit</button>
+        </div>
+        <div id="leetforces-run-results"></div>
+        <div id="leetforces-verdict-panel"></div>
+    `;
+    doc.body.appendChild(panel);
+
+    const runBtn = panel.querySelector('#leetforces-run-btn');
+    const submitBtn = panel.querySelector('#leetforces-submit-btn');
+    const runResultsEl = panel.querySelector('#leetforces-run-results');
+    const verdictEl = panel.querySelector('#leetforces-verdict-panel');
+
+    runBtn.addEventListener('click', async () => {
+        runBtn.disabled = true;
+        runBtn.textContent = 'Running...';
+        runResultsEl.innerHTML = '';
+
+        try {
+            const sourceCode = getEditorValue(editor);
+            const languageTitle = getSelectedLanguageTitle(formDetails);
+
+            const { overallPassed, results, error } = await runSampleTests({
+                languageTitle,
+                sourceCode,
+                sampleTests: context.sampleTests
+            });
+
+            if (error) {
+                runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:0.8rem; margin-top:4px;">${escapeHtml(error)}</div>`;
+            } else {
+                runResultsEl.innerHTML = `
+                    <div style="color:${overallPassed ? '#22c55e' : '#ef4444'}; font-weight:700; font-size:0.85rem; margin-top:4px;">
+                        ${overallPassed ? `All ${results.length} sample test(s) passed` : 'Some sample tests failed'}
+                    </div>
+                    ${buildTestResultsHtml(results)}
+                `;
+            }
+        } catch (err) {
+            runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:0.8rem;">${escapeHtml(err.message || 'Run failed')}</div>`;
+        } finally {
+            runBtn.disabled = false;
+            runBtn.textContent = 'Run';
+        }
+    });
+
+    submitBtn.addEventListener('click', async () => {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Submitting...';
+        verdictEl.innerHTML = '';
+
+        try {
+            const sourceCode = getEditorValue(editor);
+            const languageTitle = getSelectedLanguageTitle(formDetails);
+
+            const result = await submitSolution(sourceCode, languageTitle);
+
+            if (!result.success) {
+                verdictEl.innerHTML = `<div style="color:#ef4444; font-size:0.85rem; padding:8px 0;">Submission failed: ${escapeHtml(result.error || 'unknown error')}</div>`;
+                return;
+            }
+
+            if (!handle) {
+                verdictEl.innerHTML = `<div style="color:#f59e0b; font-size:0.85rem; padding:8px 0;">Submitted (ID ${escapeHtml(result.submissionId || '?')}), but couldn't detect your handle to poll the verdict automatically. Check the status page directly.</div>`;
+                return;
+            }
+
+            renderVerdict(verdictEl, { statusKey: 'TESTING', formattedText: 'Submitted, waiting for verdict...' });
+
+            await pollVerdict({
+                handle,
+                submissionId: result.submissionId,
+                onUpdate: (verdictData) => renderVerdict(verdictEl, verdictData)
+            });
+        } catch (err) {
+            verdictEl.innerHTML = `<div style="color:#ef4444; font-size:0.85rem; padding:8px 0;">${escapeHtml(err.message || 'Submit failed')}</div>`;
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Submit';
+        }
+    });
+
+    return panel;
+}
+
+
 /* --- src/content.js --- */
 /**
  * Main Content Script for LeetForces
  * Orchestrates Problem Context Extraction, CSRF & Submit Form Extraction, Editor Initialization, Solution Submission, and Real-Time Verdict Polling.
  */
+
+
 
 
 
@@ -1370,6 +1721,10 @@ async function initLeetForcesPage(doc = document) {
     const formDetails = extractSubmissionFormDetails(doc, context);
     console.log('[LeetForces] Extracted Form & CSRF Details:', formDetails);
 
+    // 2b. Extract logged-in user's handle (needed to poll their own verdicts)
+    const handle = extractLoggedInHandle(doc);
+    console.log('[LeetForces] Detected logged-in handle:', handle);
+
     // 3. Submission Handler
     const submitHandler = async (sourceCode, preferredLang = 'GNU G++20 (64 bit)') => {
         const programTypeId = resolveLanguageId(preferredLang, formDetails.availableLanguages);
@@ -1388,6 +1743,7 @@ async function initLeetForcesPage(doc = document) {
         window.__LEETFORCES_DATA__ = {
             context,
             formDetails,
+            handle,
             compilerMap: KNOWN_COMPILER_MAP,
             resolveLanguageId: (lang) => resolveLanguageId(lang, formDetails.availableLanguages),
             populateLanguageSelector: (selectEl, pref) => populateLanguageSelector(selectEl, formDetails.availableLanguages, pref),
@@ -1411,6 +1767,18 @@ async function initLeetForcesPage(doc = document) {
                 console.log(`[LeetForces] Detected editor type: ${editor.type}`);
                 const result = await initializeProblemEditor(context.problemKey, editor);
                 console.log(`[LeetForces] Editor initialized for problem '${context.problemKey}'. New problem: ${result.isNewProblem}`);
+
+                injectControlPanel({
+                    doc,
+                    editor,
+                    context,
+                    formDetails,
+                    handle,
+                    submitSolution: submitHandler,
+                    pollVerdict: (opts) => pollVerdictForSubmission({ ...opts, contestId: context.contestId, problemIndex: context.problemIndex }),
+                    renderVerdict: renderVerdictPanel
+                });
+
                 return true;
             }
             return false;
@@ -1428,7 +1796,7 @@ async function initLeetForcesPage(doc = document) {
         }
     }
 
-    return { context, formDetails, submitHandler };
+    return { context, formDetails, handle, submitHandler };
 }
 
 // Auto-run on content script load if in browser environment

@@ -98,6 +98,11 @@
             background: var(--accent-green);
         }
 
+        button.warning {
+            background: var(--accent-amber);
+            color: #0f172a;
+        }
+
         .grid-container {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -124,7 +129,7 @@
 
         .controls-row {
             display: flex;
-            gap: 12px;
+            gap: 10px;
             align-items: center;
             margin-bottom: 14px;
         }
@@ -259,7 +264,7 @@
 <header>
     <div class="logo-title">
         <h1>LeetForces Verification Sandbox</h1>
-        <span class="badge">Codeforces Engine & Verdict Poller</span>
+        <span class="badge">Codeforces Engine & Local Piston Test Runner</span>
     </div>
     <div class="problem-switcher">
         <button id="btnProblem1234G">Switch to Problem 1234/G</button>
@@ -326,7 +331,7 @@
         <pre class="json-output" id="extractedFormJson">Loading...</pre>
     </div>
 
-    <!-- Right Column: Code Editor, Submitter Engine & Verdict Panel -->
+    <!-- Right Column: Code Editor, Submitter Engine & Local Test Runner -->
     <div class="panel">
         <div class="panel-title">
             <span>LeetForces Extension UI</span>
@@ -334,8 +339,8 @@
         </div>
 
         <div class="controls-row">
-            <label style="font-size: 0.85rem; color: var(--text-muted);">Language:</label>
             <select id="extensionLangSelect" style="flex: 1;"></select>
+            <button id="btnRunLocalTests" class="warning">Run Sample Tests</button>
             <button id="btnSubmitSolution" class="success">Submit Solution</button>
         </div>
 
@@ -347,20 +352,20 @@
             <span id="storageInfo">Storage: Default Template</span>
         </div>
 
-        <!-- Verdict Result Panel (Prompt 7) -->
+        <!-- Verdict & Local Test Results Panel -->
         <div class="panel-title" style="margin-top: 16px;">
-            <span>Verdict Result Panel</span>
+            <span>Execution Panel</span>
         </div>
 
         <div id="verdictResultContainer">
             <div style="background: rgba(148, 163, 184, 0.1); border: 1px solid #334155; padding: 14px; border-radius: 8px; font-size: 0.85rem; color: var(--text-muted);">
-                Submit code to trigger live verdict polling & status rendering.
+                Run sample tests locally or submit code to Codeforces.
             </div>
         </div>
 
         <!-- Interactive Verdict Simulators -->
         <div class="verdict-simulator">
-            <div class="verdict-simulator-title">Simulate Verdict Triggers (Test Prompt 6 & 7):</div>
+            <div class="verdict-simulator-title">Simulate Verdict Triggers:</div>
             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                 <button class="secondary" style="font-size: 0.8rem; padding: 4px 10px;" id="btnSimulateOK">Simulate Accepted</button>
                 <button class="secondary" style="font-size: 0.8rem; padding: 4px 10px;" id="btnSimulateWA">Simulate Wrong Answer (test 3)</button>

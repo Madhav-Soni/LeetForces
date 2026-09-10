@@ -5,6 +5,7 @@ import { populateLanguageSelector } from '../src/languageMap.js';
 import { submitSolutionToCodeforces } from '../src/submitter.js';
 import { formatVerdict } from '../src/verdictPoller.js';
 import { renderVerdictPanel } from '../src/verdictUI.js';
+import { runSampleTests } from '../src/testRunner.js';
 
 let currentSimulatedUrl = 'https://codeforces.com/contest/1234/problem/G';
 
@@ -12,7 +13,7 @@ async function updateAll() {
     const context = extractProblemContext(document, currentSimulatedUrl);
     document.getElementById('extractedContextJson').textContent = JSON.stringify(context, null, 2);
 
-    const formDetails = extractSubmissionFormDetails(document);
+    const formDetails = extractSubmissionFormDetails(document, context);
     document.getElementById('extractedFormJson').textContent = JSON.stringify(formDetails, null, 2);
 
     const langSelect = document.getElementById('extensionLangSelect');
@@ -74,7 +75,37 @@ document.addEventListener('DOMContentLoaded', () => {
         updateAll();
     });
 
-    // Interactive Submit with live testing state transition to Accepted
+    // Run Local Sample Tests
+    document.getElementById('btnRunLocalTests').addEventListener('click', async () => {
+        renderVerdictPanel(verdictContainer, { statusKey: 'TESTING', formattedText: 'Running sample tests locally via Piston API...' });
+
+        const context = extractProblemContext(document, currentSimulatedUrl);
+        const selectedLangText = document.getElementById('extensionLangSelect').options[document.getElementById('extensionLangSelect').selectedIndex]?.text || 'GNU G++20 (64 bit)';
+
+        // Mock fetch for local execution in sandbox
+        const mockPistonFetch = async (url, opts) => ({
+            ok: true,
+            json: async () => ({
+                run: { stdout: '29\n', code: 0, stderr: '' }
+            })
+        });
+
+        const testRunResult = await runSampleTests({
+            languageTitle: selectedLangText,
+            sourceCode: textarea.value,
+            sampleTests: context.sampleTests
+        }, mockPistonFetch);
+
+        if (testRunResult.overallPassed) {
+            renderVerdictPanel(verdictContainer, { statusKey: 'ACCEPTED', formattedText: 'All Local Sample Tests Passed!' });
+        } else if (testRunResult.error) {
+            renderVerdictPanel(verdictContainer, { statusKey: 'COMPILATION_ERROR', formattedText: testRunResult.error });
+        } else {
+            renderVerdictPanel(verdictContainer, { statusKey: 'WRONG_ANSWER', formattedText: 'Local Sample Tests Failed' });
+        }
+    });
+
+    // Submit Solution button
     document.getElementById('btnSubmitSolution').addEventListener('click', async () => {
         renderVerdictPanel(verdictContainer, formatVerdict({ verdict: 'TESTING', passedTestCount: 0 }));
 
@@ -86,7 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         const context = extractProblemContext(document, currentSimulatedUrl);
-        const formDetails = extractSubmissionFormDetails(document);
+        const formDetails = extractSubmissionFormDetails(document, context);
 
         await submitSolutionToCodeforces({
             formAction: formDetails.formAction,
@@ -97,7 +128,6 @@ document.addEventListener('DOMContentLoaded', () => {
             sourceCode: textarea.value
         }, mockFetch);
 
-        // Simulate testing -> OK transition
         setTimeout(() => {
             renderVerdictPanel(verdictContainer, formatVerdict({ verdict: 'TESTING', passedTestCount: 2 }));
         }, 1200);

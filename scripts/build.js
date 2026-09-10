@@ -21,12 +21,15 @@ const moduleFiles = [
     'src/constants.js',
     'src/contextExtractor.js',
     'src/formExtractor.js',
+    'src/handleExtractor.js',
     'src/storage.js',
     'src/editorManager.js',
     'src/languageMap.js',
     'src/submitter.js',
+    'src/testRunner.js',
     'src/verdictPoller.js',
     'src/verdictUI.js',
+    'src/controlPanel.js',
     'src/content.js'
 ];
 

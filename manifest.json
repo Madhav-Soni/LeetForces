@@ -9,7 +9,8 @@
   ],
   "host_permissions": [
     "https://codeforces.com/*",
-    "https://*.codeforces.com/*"
+    "https://*.codeforces.com/*",
+    "https://emkc.org/*"
   ],
   "content_scripts": [
     {
