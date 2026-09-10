@@ -17,7 +17,7 @@ To install LeetForces as an unpacked Chrome Extension:
 1. Clone or download this repository:
    ```bash
    git clone https://github.com/Madhav-Soni/LeetForces.git
-   cd LeetForces
+   cd LeetForces/extension
    ```
 2. Build the production content bundle:
    ```bash
@@ -26,7 +26,7 @@ To install LeetForces as an unpacked Chrome Extension:
    *(This generates `dist/content.bundle.js` required by `manifest.json`).*
 3. Open Google Chrome and navigate to `chrome://extensions`.
 4. Enable **Developer mode** using the toggle in the top-right corner.
-5. Click **Load unpacked** and select the root directory of this repository (`LeetForces`).
+5. Click **Load unpacked** and select the `extension/` directory (not the repo root).
 6. Navigate to any Codeforces problem page to start using LeetForces!
 
 ## Supported Languages & Compilers
