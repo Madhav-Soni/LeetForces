@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LeetForces",
   "version": "1.0.0",
-  "description": "Codeforces code editor pre-filling, problem context extraction, sample test suite, and submission form integration.",
+  "description": "Codeforces code editor pre-filling, problem context extraction, sample test suite, submission form integration, and real-time verdict tracking.",
   "permissions": [
     "storage",
     "activeTab"
@@ -19,8 +19,20 @@
         "https://codeforces.com/gym/*/problem/*",
         "https://codeforces.com/group/*/contest/*/problem/*"
       ],
-      "js": ["src/content.js"],
+      "js": ["src/content-loader.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/*.js",
+        "dist/*.js"
+      ],
+      "matches": [
+        "https://codeforces.com/*",
+        "https://*.codeforces.com/*"
+      ]
     }
   ]
 }

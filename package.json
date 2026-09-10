@@ -4,9 +4,7 @@
   "description": "LeetForces Codeforces Extension",
   "type": "module",
   "scripts": {
-    "test": "node test/test_all.js"
-  },
-  "devDependencies": {
-    "jsdom": "^24.0.0"
+    "build": "node scripts/build.js",
+    "test": "node scripts/build.js && node test/test_all.js"
   }
 }
