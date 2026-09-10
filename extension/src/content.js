@@ -54,28 +54,39 @@ export async function initLeetForcesPage(doc = document) {
         };
     }
 
-    // 4. Detect Editor & Initialize Code Template / Cursor Position
+    // Mutable editor ref so the panel can use it once detection succeeds
+    const editorRef = { current: { type: 'unknown', element: null, instance: null } };
+
+    // 4. Always show the floating panel (do not wait for Ace)
+    if (context.problemKey) {
+        await injectControlPanel({
+            doc,
+            getEditor: () => editorRef.current,
+            context,
+            formDetails,
+            submitSolution: submitHandler,
+            pollVerdict: (opts) => pollVerdictForSubmission({ ...opts, contestId: context.contestId, problemIndex: context.problemIndex }),
+            renderVerdict: renderVerdictPanel
+        });
+        console.log('[LeetForces] Control panel injected.');
+    }
+
+    // 5. Detect Editor & Initialize Code Template / Cursor Position (retry — Ace loads late)
     if (context.problemKey) {
         let attempts = 0;
-        const maxAttempts = 10;
+        const maxAttempts = 40; // ~12s with 300ms interval
+        let initialized = false;
 
         const attemptEditorInit = async () => {
             const editor = detectEditor(doc);
             if (editor.type !== 'unknown' && editor.instance) {
-                console.log(`[LeetForces] Detected editor type: ${editor.type}`);
-                const result = await initializeProblemEditor(context.problemKey, editor);
-                console.log(`[LeetForces] Editor initialized for problem '${context.problemKey}'. New problem: ${result.isNewProblem}`);
-
-                await injectControlPanel({
-                    doc,
-                    editor,
-                    context,
-                    formDetails,
-                    submitSolution: submitHandler,
-                    pollVerdict: (opts) => pollVerdictForSubmission({ ...opts, contestId: context.contestId, problemIndex: context.problemIndex }),
-                    renderVerdict: renderVerdictPanel
-                });
-
+                editorRef.current = editor;
+                console.log(`[LeetForces] Detected editor type: ${editor.type}${editor.bridgeType ? ` (${editor.bridgeType})` : ''}`);
+                if (!initialized) {
+                    const result = await initializeProblemEditor(context.problemKey, editor);
+                    initialized = true;
+                    console.log(`[LeetForces] Editor initialized for problem '${context.problemKey}'. New problem: ${result.isNewProblem}`);
+                }
                 return true;
             }
             return false;
@@ -88,6 +99,9 @@ export async function initLeetForcesPage(doc = document) {
                 const ok = await attemptEditorInit();
                 if (ok || attempts >= maxAttempts) {
                     clearInterval(interval);
+                    if (!ok) {
+                        console.warn('[LeetForces] Editor not detected after retries. Panel is still available; open the submit box / wait for Ace to load.');
+                    }
                 }
             }, 300);
         }

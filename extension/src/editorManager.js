@@ -1,6 +1,9 @@
 /**
  * Editor Manager for LeetForces
  * Manages editor detection, template injection, cursor positioning, and state persistence.
+ *
+ * Chrome content scripts run in an isolated world, so window.ace is invisible.
+ * When direct detection fails, we talk to src/pageBridge.js (MAIN world) via CustomEvents.
  */
 
 import { DEFAULT_CPP_TEMPLATE, DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN } from './constants.js';
@@ -8,9 +11,9 @@ import { getSavedCode, saveCode, getLastProblemKey, setLastProblemKey } from './
 
 /**
  * Computes character offset in raw string for target line and column (1-indexed).
- * @param {string} text 
- * @param {number} targetLine 
- * @param {number} targetCol 
+ * @param {string} text
+ * @param {number} targetLine
+ * @param {number} targetCol
  * @returns {number}
  */
 export function computeCursorOffset(text, targetLine, targetCol) {
@@ -28,49 +31,80 @@ export function computeCursorOffset(text, targetLine, targetCol) {
 }
 
 /**
- * Detects code editor on the page (Ace, Monaco, CodeMirror, Textarea).
- * @param {Document} doc 
- * @returns {{ type: string, element: Element|null, instance: any|null }}
+ * Synchronous page-bridge RPC (CustomEvent handlers run in the same turn).
+ * @param {string} method
+ * @param {any[]} [args]
+ * @returns {any}
  */
-export function detectEditor(doc = document) {
-    // 1. Check for Ace Editor
+function callPageBridge(method, args = []) {
+    if (typeof document === 'undefined') return null;
+    const id = `lf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    let payload = null;
+
+    const onResponse = (event) => {
+        if (event.detail && event.detail.id === id) {
+            payload = event.detail;
+        }
+    };
+
+    document.addEventListener('leetforces-bridge-response', onResponse);
+    document.dispatchEvent(new CustomEvent('leetforces-bridge-request', {
+        detail: { id, method, args }
+    }));
+    document.removeEventListener('leetforces-bridge-response', onResponse);
+
+    if (!payload || payload.error) return null;
+    return payload.result;
+}
+
+function createBridgeEditor(type) {
+    return {
+        type: 'bridge',
+        bridgeType: type,
+        element: null,
+        instance: { __leetforcesBridge: true }
+    };
+}
+
+function detectEditorDirect(doc = document) {
+    // 1. Ace (only works if running in page / MAIN world)
     const aceEl = doc.querySelector('.ace_editor');
-    if (aceEl && window.ace) {
+    if (aceEl && typeof window !== 'undefined' && window.ace) {
         try {
             const aceInstance = window.ace.edit(aceEl);
             if (aceInstance) {
                 return { type: 'ace', element: aceEl, instance: aceInstance };
             }
         } catch (e) {
-            // Ace instance might be attached on element directly
             if (aceEl.env && aceEl.env.editor) {
                 return { type: 'ace', element: aceEl, instance: aceEl.env.editor };
             }
         }
     }
 
-    // 2. Check for Monaco Editor
+    // 2. Monaco
     const monacoEl = doc.querySelector('.monaco-editor');
-    if (monacoEl && window.monaco && window.monaco.editor) {
+    if (monacoEl && typeof window !== 'undefined' && window.monaco && window.monaco.editor) {
         const editors = window.monaco.editor.getEditors();
         if (editors && editors.length > 0) {
             return { type: 'monaco', element: monacoEl, instance: editors[0] };
         }
     }
 
-    // 3. Check for CodeMirror 5
+    // 3. CodeMirror 5
     const cmEl = doc.querySelector('.CodeMirror');
     if (cmEl && cmEl.CodeMirror) {
         return { type: 'codemirror', element: cmEl, instance: cmEl.CodeMirror };
     }
 
-    // 4. Check for standard Textarea (Codeforces default submit textarea or custom)
+    // 4. Submit-form textarea (prefer CF selectors; avoid random page textareas)
     const textareaSelectors = [
+        'form.submit-form textarea[name="source"]',
+        'form#singlePageSubmitForm textarea[name="source"]',
+        'form[action*="submit"] textarea[name="source"]',
         'textarea#sourceCodeTextarea',
         'textarea[name="source"]',
-        'textarea.source-code',
-        '#editor textarea',
-        'textarea'
+        'textarea.source-code'
     ];
 
     for (const selector of textareaSelectors) {
@@ -84,13 +118,42 @@ export function detectEditor(doc = document) {
 }
 
 /**
+ * Detects code editor on the page (Ace, Monaco, CodeMirror, Textarea, or page bridge).
+ * @param {Document} doc
+ * @returns {{ type: string, element: Element|null, instance: any|null, bridgeType?: string }}
+ */
+export function detectEditor(doc = document) {
+    const direct = detectEditorDirect(doc);
+    if (direct.type !== 'unknown' && direct.instance) {
+        return direct;
+    }
+
+    // Isolated content script: talk to MAIN-world pageBridge
+    const bridged = callPageBridge('detect');
+    if (bridged && bridged.ready && bridged.type && bridged.type !== 'unknown') {
+        return createBridgeEditor(bridged.type);
+    }
+
+    // Ace DOM present but not ready yet
+    if (doc.querySelector('.ace_editor') || (bridged && bridged.type === 'ace')) {
+        return { type: 'unknown', element: doc.querySelector('.ace_editor'), instance: null };
+    }
+
+    return { type: 'unknown', element: null, instance: null };
+}
+
+/**
  * Gets current value from editor instance.
- * @param {{ type: string, instance: any }} editor 
+ * @param {{ type: string, instance: any }} editor
  * @returns {string}
  */
 export function getEditorValue(editor) {
     if (!editor || !editor.instance) return '';
     switch (editor.type) {
+        case 'bridge': {
+            const value = callPageBridge('getValue');
+            return typeof value === 'string' ? value : '';
+        }
         case 'ace':
             return editor.instance.getValue();
         case 'monaco':
@@ -106,12 +169,15 @@ export function getEditorValue(editor) {
 
 /**
  * Sets value into editor instance.
- * @param {{ type: string, instance: any }} editor 
- * @param {string} code 
+ * @param {{ type: string, instance: any }} editor
+ * @param {string} code
  */
 export function setEditorValue(editor, code) {
     if (!editor || !editor.instance) return;
     switch (editor.type) {
+        case 'bridge':
+            callPageBridge('setValue', [code]);
+            break;
         case 'ace':
             editor.instance.setValue(code, -1);
             break;
@@ -123,7 +189,6 @@ export function setEditorValue(editor, code) {
             break;
         case 'textarea':
             editor.instance.value = code;
-            // Dispatch input/change events for framework listeners
             editor.instance.dispatchEvent(new Event('input', { bubbles: true }));
             editor.instance.dispatchEvent(new Event('change', { bubbles: true }));
             break;
@@ -132,7 +197,7 @@ export function setEditorValue(editor, code) {
 
 /**
  * Positions editor cursor at target line and column (1-indexed), focusing the editor.
- * @param {{ type: string, instance: any, element: Element }} editor 
+ * @param {{ type: string, instance: any, element: Element }} editor
  * @param {number} line - Target line number (1-indexed)
  * @param {number} col - Target column number (1-indexed)
  */
@@ -141,6 +206,9 @@ export function setEditorCursor(editor, line = DEFAULT_CURSOR_LINE, col = DEFAUL
 
     try {
         switch (editor.type) {
+            case 'bridge':
+                callPageBridge('setCursor', [line, col]);
+                break;
             case 'ace':
                 editor.instance.focus();
                 editor.instance.gotoLine(line, col - 1, true);
@@ -169,14 +237,9 @@ export function setEditorCursor(editor, line = DEFAULT_CURSOR_LINE, col = DEFAUL
 }
 
 /**
- * Initializes problem code:
- * - Checks if saved code exists for this problemKey
- * - Checks if switching to a new problem
- * - Restores saved code if present
- * - Pre-fills with DEFAULT_CPP_TEMPLATE if new problem or empty
- * - Places cursor at line 11, col 9 (inside while loop)
- * @param {string} problemKey 
- * @param {{ type: string, instance: any, element: Element }} editor 
+ * Initializes problem code for the detected editor.
+ * @param {string} problemKey
+ * @param {{ type: string, instance: any, element: Element }} editor
  * @returns {Promise<{ isNewProblem: boolean, codeUsed: string }>}
  */
 export async function initializeProblemEditor(problemKey, editor) {
@@ -191,29 +254,21 @@ export async function initializeProblemEditor(problemKey, editor) {
     let codeToApply = DEFAULT_CPP_TEMPLATE;
 
     if (savedCode && savedCode.trim().length > 0) {
-        // Saved code exists for this problem (e.g. page refresh) -> restore it!
         codeToApply = savedCode;
     } else {
-        // New problem or no saved code -> initialize with default template
         codeToApply = DEFAULT_CPP_TEMPLATE;
         await saveCode(problemKey, codeToApply);
     }
 
-    // Update last visited problem key
     await setLastProblemKey(problemKey);
-
-    // Apply code to editor
     setEditorValue(editor, codeToApply);
 
-    // Position cursor at line 11, col 9 (inside while loop)
-    // Only set cursor to default template position if code is default template or new problem
     if (codeToApply === DEFAULT_CPP_TEMPLATE || !savedCode) {
         setTimeout(() => {
             setEditorCursor(editor, DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN);
         }, 50);
     }
 
-    // Attach auto-save listener
     attachAutoSaveListener(problemKey, editor);
 
     return { isNewProblem, codeUsed: codeToApply };
@@ -221,8 +276,8 @@ export async function initializeProblemEditor(problemKey, editor) {
 
 /**
  * Attaches event listener to auto-save code changes for current problemKey.
- * @param {string} problemKey 
- * @param {{ type: string, instance: any, element: Element }} editor 
+ * @param {string} problemKey
+ * @param {{ type: string, instance: any, element: Element }} editor
  */
 export function attachAutoSaveListener(problemKey, editor) {
     if (!problemKey || !editor || !editor.instance) return;
@@ -239,6 +294,10 @@ export function attachAutoSaveListener(problemKey, editor) {
     };
 
     switch (editor.type) {
+        case 'bridge':
+            callPageBridge('bindChange');
+            document.addEventListener('leetforces-bridge-change', triggerSave);
+            break;
         case 'ace':
             editor.instance.on('change', triggerSave);
             break;

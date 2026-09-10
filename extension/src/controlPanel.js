@@ -45,6 +45,7 @@ function buildTestResultsHtml(results) {
 export async function injectControlPanel({
     doc = document,
     editor,
+    getEditor,
     context,
     formDetails,
     submitSolution,
@@ -53,6 +54,11 @@ export async function injectControlPanel({
 }) {
     const existing = doc.getElementById(PANEL_ID);
     if (existing) return existing;
+
+    const resolveEditor = () => {
+        if (typeof getEditor === 'function') return getEditor();
+        return editor;
+    };
 
     const panel = doc.createElement('div');
     panel.id = PANEL_ID;
@@ -109,7 +115,7 @@ export async function injectControlPanel({
         runResultsEl.innerHTML = '';
 
         try {
-            const sourceCode = getEditorValue(editor);
+            const sourceCode = getEditorValue(resolveEditor());
             const languageTitle = getSelectedLangTitle();
 
             const { overallPassed, results, error } = await runSampleTests({
@@ -142,7 +148,7 @@ export async function injectControlPanel({
         verdictEl.innerHTML = '';
 
         try {
-            const sourceCode = getEditorValue(editor);
+            const sourceCode = getEditorValue(resolveEditor());
             const languageTitle = getSelectedLangTitle();
 
             const result = await submitSolution(sourceCode, languageTitle);
