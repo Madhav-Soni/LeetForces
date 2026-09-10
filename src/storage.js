@@ -18,11 +18,13 @@ export async function getSavedCode(problemKey) {
     }
 
     try {
-        return localStorage.getItem(storageKey);
+        if (typeof localStorage !== 'undefined') {
+            return localStorage.getItem(storageKey);
+        }
     } catch (e) {
         console.warn('LeetForces: LocalStorage read failed', e);
-        return null;
     }
+    return null;
 }
 
 export async function saveCode(problemKey, code) {
@@ -36,7 +38,9 @@ export async function saveCode(problemKey, code) {
     }
 
     try {
-        localStorage.setItem(storageKey, code);
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(storageKey, code);
+        }
     } catch (e) {
         console.warn('LeetForces: LocalStorage write failed', e);
     }
@@ -54,7 +58,9 @@ export async function getLastProblemKey() {
     }
 
     try {
-        return localStorage.getItem(storageKey);
+        if (typeof localStorage !== 'undefined') {
+            return localStorage.getItem(storageKey);
+        }
     } catch (e) {
         return null;
     }
@@ -70,7 +76,48 @@ export async function setLastProblemKey(problemKey) {
     }
 
     try {
-        localStorage.setItem(storageKey, problemKey);
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(storageKey, problemKey);
+        }
+    } catch (e) {
+        console.warn('LeetForces: LocalStorage write failed', e);
+    }
+}
+
+export async function getPreferredLanguage() {
+    const storageKey = STORAGE_KEYS.PREFERRED_LANG;
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        return new Promise(resolve => {
+            chrome.storage.local.get([storageKey], result => {
+                resolve(result[storageKey] || null);
+            });
+        });
+    }
+
+    try {
+        if (typeof localStorage !== 'undefined') {
+            return localStorage.getItem(storageKey);
+        }
+    } catch (e) {
+        return null;
+    }
+}
+
+export async function savePreferredLanguage(title) {
+    if (!title) return;
+    const storageKey = STORAGE_KEYS.PREFERRED_LANG;
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        return new Promise(resolve => {
+            chrome.storage.local.set({ [storageKey]: title }, resolve);
+        });
+    }
+
+    try {
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(storageKey, title);
+        }
     } catch (e) {
         console.warn('LeetForces: LocalStorage write failed', e);
     }

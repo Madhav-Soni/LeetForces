@@ -32,6 +32,7 @@ const DEFAULT_CURSOR_COLUMN = 9;
 const STORAGE_KEYS = {
     CODE_PREFIX: 'leetforces_code_',
     LAST_PROBLEM_KEY: 'leetforces_last_problem_key',
+    PREFERRED_LANG: 'leetforces_preferred_lang',
     SETTINGS: 'leetforces_settings'
 };
 
@@ -333,31 +334,6 @@ function extractSubmissionFormDetails(doc = document, context = {}) {
 }
 
 
-/* --- src/handleExtractor.js --- */
-/**
- * Codeforces Handle Extractor
- * Extracts the currently logged-in user's handle from the page header,
- * needed to poll their own submission list for verdicts.
- */
-
-/**
- * @param {Document} doc
- * @returns {string|null}
- */
-function extractLoggedInHandle(doc = document) {
-    // The header's profile link is the reliable place to look; other
-    // /profile/ links on the page (comments, standings) are not the viewer.
-    const header = doc.querySelector('#header') || doc;
-    const link = header.querySelector('a[href^="/profile/"]');
-    if (link) {
-        const match = link.getAttribute('href').match(/\/profile\/([^/?#]+)/);
-        if (match) return decodeURIComponent(match[1]);
-        if (link.textContent) return link.textContent.trim();
-    }
-    return null;
-}
-
-
 /* --- src/storage.js --- */
 /**
  * Storage Abstraction for LeetForces
@@ -379,11 +355,13 @@ async function getSavedCode(problemKey) {
     }
 
     try {
-        return localStorage.getItem(storageKey);
+        if (typeof localStorage !== 'undefined') {
+            return localStorage.getItem(storageKey);
+        }
     } catch (e) {
         console.warn('LeetForces: LocalStorage read failed', e);
-        return null;
     }
+    return null;
 }
 
 async function saveCode(problemKey, code) {
@@ -397,7 +375,9 @@ async function saveCode(problemKey, code) {
     }
 
     try {
-        localStorage.setItem(storageKey, code);
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(storageKey, code);
+        }
     } catch (e) {
         console.warn('LeetForces: LocalStorage write failed', e);
     }
@@ -415,7 +395,9 @@ async function getLastProblemKey() {
     }
 
     try {
-        return localStorage.getItem(storageKey);
+        if (typeof localStorage !== 'undefined') {
+            return localStorage.getItem(storageKey);
+        }
     } catch (e) {
         return null;
     }
@@ -431,7 +413,48 @@ async function setLastProblemKey(problemKey) {
     }
 
     try {
-        localStorage.setItem(storageKey, problemKey);
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(storageKey, problemKey);
+        }
+    } catch (e) {
+        console.warn('LeetForces: LocalStorage write failed', e);
+    }
+}
+
+async function getPreferredLanguage() {
+    const storageKey = STORAGE_KEYS.PREFERRED_LANG;
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        return new Promise(resolve => {
+            chrome.storage.local.get([storageKey], result => {
+                resolve(result[storageKey] || null);
+            });
+        });
+    }
+
+    try {
+        if (typeof localStorage !== 'undefined') {
+            return localStorage.getItem(storageKey);
+        }
+    } catch (e) {
+        return null;
+    }
+}
+
+async function savePreferredLanguage(title) {
+    if (!title) return;
+    const storageKey = STORAGE_KEYS.PREFERRED_LANG;
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        return new Promise(resolve => {
+            chrome.storage.local.set({ [storageKey]: title }, resolve);
+        });
+    }
+
+    try {
+        if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(storageKey, title);
+        }
     } catch (e) {
         console.warn('LeetForces: LocalStorage write failed', e);
     }
@@ -779,13 +802,16 @@ function resolveLanguageId(preferredLang, availableLanguages = []) {
 function populateLanguageSelector(selectElement, availableLanguages = [], preferredLang = '') {
     if (!selectElement) return;
 
+    const doc = selectElement.ownerDocument || (typeof document !== 'undefined' ? document : null);
+    if (!doc) return;
+
     selectElement.innerHTML = '';
     const resolvedId = resolveLanguageId(preferredLang, availableLanguages);
 
     if (availableLanguages.length === 0) {
         // Render from KNOWN_COMPILER_MAP if form options not available
         for (const [name, id] of Object.entries(KNOWN_COMPILER_MAP)) {
-            const opt = document.createElement('option');
+            const opt = doc.createElement('option');
             opt.value = id;
             opt.textContent = name;
             if (id === resolvedId) opt.selected = true;
@@ -795,7 +821,7 @@ function populateLanguageSelector(selectElement, availableLanguages = [], prefer
     }
 
     availableLanguages.forEach(lang => {
-        const opt = document.createElement('option');
+        const opt = doc.createElement('option');
         opt.value = lang.value;
         opt.textContent = lang.title;
         if (String(lang.value) === String(resolvedId)) {
@@ -1142,11 +1168,12 @@ async function runSampleTests({ languageTitle, sourceCode, sampleTests = [] }, f
 /* --- src/verdictPoller.js --- */
 /**
  * Codeforces Verdict Poller Engine
- * Repeatedly queries Codeforces API for submission status until testing completes.
+ * Repeatedly queries Codeforces contest status API anonymously for submission status until testing completes.
+ * Uses ZERO personal user data or handles.
  */
 
 /**
- * Formats raw Codeforces API verdict into clean user-facing status details.
+ * Formats raw Codeforces API submission object into clean user-facing status details.
  * @param {object} submission - Submission object from Codeforces API
  * @returns {{
  *   statusKey: string,
@@ -1277,14 +1304,14 @@ function formatVerdict(submission) {
 }
 
 /**
- * Fetches recent submissions for a handle from Codeforces public API.
- * @param {string} handle 
+ * Fetches recent submissions for a contest anonymously from Codeforces public API.
+ * @param {string|number} contestId 
  * @param {function} [fetchImpl] 
  * @returns {Promise<Array<object>>}
  */
-async function fetchUserSubmissions(handle, fetchImpl = (typeof fetch !== 'undefined' ? fetch : null)) {
-    if (!handle || !fetchImpl) return [];
-    const url = `https://codeforces.com/api/user.status?handle=${encodeURIComponent(handle)}&from=1&count=10`;
+async function fetchContestSubmissions(contestId, fetchImpl = (typeof fetch !== 'undefined' ? fetch : null)) {
+    if (!contestId || !fetchImpl) return [];
+    const url = `https://codeforces.com/api/contest.status?contestId=${encodeURIComponent(contestId)}&from=1&count=20`;
 
     try {
         const response = await fetchImpl(url);
@@ -1300,11 +1327,10 @@ async function fetchUserSubmissions(handle, fetchImpl = (typeof fetch !== 'undef
 }
 
 /**
- * Polls Codeforces API for verdict of a specific submission.
+ * Polls Codeforces API anonymously for verdict of a specific submission.
  * @param {object} options 
- * @param {string} options.handle - User handle
  * @param {string|number} [options.submissionId] - Submission ID to match
- * @param {string|number} [options.contestId] - Contest ID fallback
+ * @param {string|number} [options.contestId] - Contest ID
  * @param {string} [options.problemIndex] - Problem Index fallback
  * @param {number} [options.intervalMs] - Polling interval in ms (default 2000)
  * @param {number} [options.maxAttempts] - Maximum polling attempts (default 30)
@@ -1314,7 +1340,6 @@ async function fetchUserSubmissions(handle, fetchImpl = (typeof fetch !== 'undef
  */
 async function pollVerdictForSubmission(options = {}) {
     const {
-        handle,
         submissionId,
         contestId,
         problemIndex,
@@ -1329,7 +1354,7 @@ async function pollVerdictForSubmission(options = {}) {
     return new Promise(resolve => {
         const checkStatus = async () => {
             attempts++;
-            const submissions = await fetchUserSubmissions(handle, fetchImpl);
+            const submissions = await fetchContestSubmissions(contestId, fetchImpl);
 
             let matchedSub = null;
 
@@ -1337,9 +1362,8 @@ async function pollVerdictForSubmission(options = {}) {
                 matchedSub = submissions.find(s => String(s.id) === String(submissionId));
             }
 
-            if (!matchedSub && contestId && problemIndex) {
+            if (!matchedSub && problemIndex) {
                 matchedSub = submissions.find(s => 
-                    String(s.contestId) === String(contestId) && 
                     s.problem && String(s.problem.index).toUpperCase() === String(problemIndex).toUpperCase()
                 );
             }
@@ -1537,7 +1561,10 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
 /**
  * LeetForces Control Panel
  * Injects a floating Run/Submit control bar into Codeforces problem pages.
+ * Displays ZERO personal user data.
  */
+
+
 
 
 
@@ -1569,23 +1596,17 @@ function buildTestResultsHtml(results) {
     }).join('');
 }
 
-function getSelectedLanguageTitle(formDetails) {
-    const selected = (formDetails.availableLanguages || []).find(l => l.isSelected);
-    return selected ? selected.title : 'GNU G++20 (64 bit)';
-}
-
 /**
  * Injects the Run/Submit control panel into the page. Safe to call once;
  * subsequent calls return the existing panel instead of duplicating it.
  * @param {object} deps
- * @returns {HTMLElement}
+ * @returns {Promise<HTMLElement>}
  */
-function injectControlPanel({
+async function injectControlPanel({
     doc = document,
     editor,
     context,
     formDetails,
-    handle,
     submitSolution,
     pollVerdict,
     renderVerdict
@@ -1607,6 +1628,7 @@ function injectControlPanel({
             <span style="color:#e2e8f0; font-weight:700; font-size:0.9rem;">LeetForces</span>
             <span style="color:#64748b; font-size:0.75rem;">${escapeHtml(context.problemKey || '')}</span>
         </div>
+        <select id="leetforces-lang-select" style="background:#1e293b; border:1px solid #334155; color:#e2e8f0; border-radius:6px; padding:6px 10px; font-size:0.8rem; width:100%; margin-bottom:10px; font-family:inherit;"></select>
         <div style="display:flex; gap:8px; margin-bottom:10px;">
             <button id="leetforces-run-btn" style="flex:1; padding:10px; border:none; border-radius:8px; background:#334155; color:#e2e8f0; font-weight:700; cursor:pointer;">Run</button>
             <button id="leetforces-submit-btn" style="flex:1; padding:10px; border:none; border-radius:8px; background:#22c55e; color:#052e16; font-weight:700; cursor:pointer;">Submit</button>
@@ -1616,10 +1638,30 @@ function injectControlPanel({
     `;
     doc.body.appendChild(panel);
 
+    const langSelect = panel.querySelector('#leetforces-lang-select');
     const runBtn = panel.querySelector('#leetforces-run-btn');
     const submitBtn = panel.querySelector('#leetforces-submit-btn');
     const runResultsEl = panel.querySelector('#leetforces-run-results');
     const verdictEl = panel.querySelector('#leetforces-verdict-panel');
+
+    // Populate language selector with saved preference
+    const savedLang = await getPreferredLanguage();
+    const defaultSelected = (formDetails.availableLanguages || []).find(l => l.isSelected);
+    const preferredLang = savedLang || (defaultSelected ? defaultSelected.title : 'GNU G++20 (64 bit)');
+
+    populateLanguageSelector(langSelect, formDetails.availableLanguages, preferredLang);
+
+    // Save language choice on change
+    langSelect.addEventListener('change', () => {
+        const selectedText = langSelect.options[langSelect.selectedIndex]?.text;
+        if (selectedText) {
+            savePreferredLanguage(selectedText);
+        }
+    });
+
+    const getSelectedLangTitle = () => {
+        return langSelect.options[langSelect.selectedIndex]?.text || 'GNU G++20 (64 bit)';
+    };
 
     runBtn.addEventListener('click', async () => {
         runBtn.disabled = true;
@@ -1628,7 +1670,7 @@ function injectControlPanel({
 
         try {
             const sourceCode = getEditorValue(editor);
-            const languageTitle = getSelectedLanguageTitle(formDetails);
+            const languageTitle = getSelectedLangTitle();
 
             const { overallPassed, results, error } = await runSampleTests({
                 languageTitle,
@@ -1661,7 +1703,7 @@ function injectControlPanel({
 
         try {
             const sourceCode = getEditorValue(editor);
-            const languageTitle = getSelectedLanguageTitle(formDetails);
+            const languageTitle = getSelectedLangTitle();
 
             const result = await submitSolution(sourceCode, languageTitle);
 
@@ -1670,15 +1712,9 @@ function injectControlPanel({
                 return;
             }
 
-            if (!handle) {
-                verdictEl.innerHTML = `<div style="color:#f59e0b; font-size:0.85rem; padding:8px 0;">Submitted (ID ${escapeHtml(result.submissionId || '?')}), but couldn't detect your handle to poll the verdict automatically. Check the status page directly.</div>`;
-                return;
-            }
-
             renderVerdict(verdictEl, { statusKey: 'TESTING', formattedText: 'Submitted, waiting for verdict...' });
 
             await pollVerdict({
-                handle,
                 submissionId: result.submissionId,
                 onUpdate: (verdictData) => renderVerdict(verdictEl, verdictData)
             });
@@ -1698,8 +1734,8 @@ function injectControlPanel({
 /**
  * Main Content Script for LeetForces
  * Orchestrates Problem Context Extraction, CSRF & Submit Form Extraction, Editor Initialization, Solution Submission, and Real-Time Verdict Polling.
+ * Strictly uses ZERO personal user data.
  */
-
 
 
 
@@ -1721,10 +1757,6 @@ async function initLeetForcesPage(doc = document) {
     const formDetails = extractSubmissionFormDetails(doc, context);
     console.log('[LeetForces] Extracted Form & CSRF Details:', formDetails);
 
-    // 2b. Extract logged-in user's handle (needed to poll their own verdicts)
-    const handle = extractLoggedInHandle(doc);
-    console.log('[LeetForces] Detected logged-in handle:', handle);
-
     // 3. Submission Handler
     const submitHandler = async (sourceCode, preferredLang = 'GNU G++20 (64 bit)') => {
         const programTypeId = resolveLanguageId(preferredLang, formDetails.availableLanguages);
@@ -1743,7 +1775,6 @@ async function initLeetForcesPage(doc = document) {
         window.__LEETFORCES_DATA__ = {
             context,
             formDetails,
-            handle,
             compilerMap: KNOWN_COMPILER_MAP,
             resolveLanguageId: (lang) => resolveLanguageId(lang, formDetails.availableLanguages),
             populateLanguageSelector: (selectEl, pref) => populateLanguageSelector(selectEl, formDetails.availableLanguages, pref),
@@ -1768,12 +1799,11 @@ async function initLeetForcesPage(doc = document) {
                 const result = await initializeProblemEditor(context.problemKey, editor);
                 console.log(`[LeetForces] Editor initialized for problem '${context.problemKey}'. New problem: ${result.isNewProblem}`);
 
-                injectControlPanel({
+                await injectControlPanel({
                     doc,
                     editor,
                     context,
                     formDetails,
-                    handle,
                     submitSolution: submitHandler,
                     pollVerdict: (opts) => pollVerdictForSubmission({ ...opts, contestId: context.contestId, problemIndex: context.problemIndex }),
                     renderVerdict: renderVerdictPanel
@@ -1796,7 +1826,7 @@ async function initLeetForcesPage(doc = document) {
         }
     }
 
-    return { context, formDetails, handle, submitHandler };
+    return { context, formDetails, submitHandler };
 }
 
 // Auto-run on content script load if in browser environment

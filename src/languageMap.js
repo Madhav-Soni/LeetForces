@@ -79,13 +79,16 @@ export function resolveLanguageId(preferredLang, availableLanguages = []) {
 export function populateLanguageSelector(selectElement, availableLanguages = [], preferredLang = '') {
     if (!selectElement) return;
 
+    const doc = selectElement.ownerDocument || (typeof document !== 'undefined' ? document : null);
+    if (!doc) return;
+
     selectElement.innerHTML = '';
     const resolvedId = resolveLanguageId(preferredLang, availableLanguages);
 
     if (availableLanguages.length === 0) {
         // Render from KNOWN_COMPILER_MAP if form options not available
         for (const [name, id] of Object.entries(KNOWN_COMPILER_MAP)) {
-            const opt = document.createElement('option');
+            const opt = doc.createElement('option');
             opt.value = id;
             opt.textContent = name;
             if (id === resolvedId) opt.selected = true;
@@ -95,7 +98,7 @@ export function populateLanguageSelector(selectElement, availableLanguages = [],
     }
 
     availableLanguages.forEach(lang => {
-        const opt = document.createElement('option');
+        const opt = doc.createElement('option');
         opt.value = lang.value;
         opt.textContent = lang.title;
         if (String(lang.value) === String(resolvedId)) {

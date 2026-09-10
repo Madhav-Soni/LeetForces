@@ -8,16 +8,65 @@ class MockElement {
         this.attributes = { ...attrs };
         this.children = [];
         this.parent = null;
+        this.ownerDocument = null;
         this.textContent = textContent;
         this.innerText = textContent;
         this.value = attrs.value || textContent;
         this.name = attrs.name || '';
+        this.id = attrs.id || '';
         this.selected = attrs.selected !== undefined ? attrs.selected : false;
         this.action = attrs.action || '';
+        this.options = [];
+        this.selectedIndex = 0;
+        this.listeners = {};
+        this.style = { cssText: '' };
+    }
+
+    get text() {
+        return this.textContent;
+    }
+
+    addEventListener(event, handler) {
+        if (!this.listeners[event]) this.listeners[event] = [];
+        this.listeners[event].push(handler);
+    }
+
+    dispatchEvent(evt) {
+        const type = typeof evt === 'string' ? evt : (evt.type || 'click');
+        const handlers = this.listeners[type] || [];
+        handlers.forEach(h => h(evt));
+    }
+
+    click() {
+        this.dispatchEvent('click');
     }
 
     getAttribute(name) {
         return this.attributes[name] || null;
+    }
+
+    getElementById(id) {
+        return this.querySelector(`#${id}`);
+    }
+
+    createElement(tagName) {
+        const el = new MockElement(tagName);
+        el.ownerDocument = this.ownerDocument || this;
+        return el;
+    }
+
+    appendChild(child) {
+        child.parent = this;
+        child.ownerDocument = this.ownerDocument || this;
+        this.children.push(child);
+        if (child.tagName === 'OPTION' && this.tagName === 'SELECT') {
+            this.options.push(child);
+            if (child.selected) {
+                this.selectedIndex = this.options.length - 1;
+                this.value = child.value;
+            }
+        }
+        return child;
     }
 
     querySelector(selector) {
@@ -42,12 +91,56 @@ class MockElement {
         }
         return matches;
     }
+
+    set innerHTML(htmlStr) {
+        this.children = [];
+        this.options = [];
+        if (typeof htmlStr === 'string' && htmlStr === '') {
+            return;
+        }
+        const doc = this.ownerDocument || this;
+        if (typeof htmlStr === 'string' && htmlStr.includes('<option')) {
+            const matches = htmlStr.match(/<option[^>]*>[\s\S]*?<\/option>/gi);
+            if (matches) {
+                matches.forEach((optHtml) => {
+                    const valMatch = optHtml.match(/value=["']([^"']+)["']/i);
+                    const selMatch = optHtml.includes('selected');
+                    const textMatch = optHtml.replace(/<[^>]+>/g, '').trim();
+                    const optEl = doc.createElement('option');
+                    optEl.value = valMatch ? valMatch[1] : '';
+                    optEl.selected = selMatch;
+                    optEl.textContent = textMatch;
+                    optEl.innerText = textMatch;
+                    this.appendChild(optEl);
+                });
+            }
+        } else if (typeof htmlStr === 'string' && htmlStr.includes('leetforces-lang-select')) {
+            const selectEl = doc.createElement('select');
+            selectEl.id = 'leetforces-lang-select';
+            const runBtn = doc.createElement('button');
+            runBtn.id = 'leetforces-run-btn';
+            const submitBtn = doc.createElement('button');
+            submitBtn.id = 'leetforces-submit-btn';
+            const runResults = doc.createElement('div');
+            runResults.id = 'leetforces-run-results';
+            const verdictPanel = doc.createElement('div');
+            verdictPanel.id = 'leetforces-verdict-panel';
+            this.appendChild(selectEl);
+            this.appendChild(runBtn);
+            this.appendChild(submitBtn);
+            this.appendChild(runResults);
+            this.appendChild(verdictPanel);
+        }
+    }
 }
 
 function matchSingleAtom(el, atom) {
     if (!el || !atom) return false;
 
-    // Extract bare tag name before any '.', '#', or '['
+    if (atom.startsWith('#')) {
+        return el.id === atom.slice(1);
+    }
+
     let rawTag = atom.split(/[\.\[#]/)[0];
     if (rawTag && rawTag.toUpperCase() !== el.tagName) {
         return false;
@@ -62,6 +155,11 @@ function matchSingleAtom(el, atom) {
     if (atom.includes('[name=')) {
         const match = atom.match(/\[name=["']?([^"']+)["']?\]/);
         if (match && el.name !== match[1]) return false;
+    }
+
+    if (atom.includes('[id=')) {
+        const match = atom.match(/\[id=["']?([^"']+)["']?\]/);
+        if (match && el.id !== match[1]) return false;
     }
 
     if (atom.includes('[action*=')) {
@@ -82,7 +180,6 @@ function matchesSelector(el, selector) {
         if (!matchSingleAtom(el, lastAtom)) continue;
 
         if (atoms.length > 1) {
-            // Check ancestors
             const ancestorAtom = atoms[atoms.length - 2];
             let currentParent = el.parent;
             let ancestorMatched = false;
@@ -104,35 +201,58 @@ function matchesSelector(el, selector) {
 export function createMockDocument({ titleText, samples = [], formAttrs = {}, langOptions = [] }) {
     const root = new MockElement('html');
     const body = new MockElement('body');
+    root.ownerDocument = root;
+    body.ownerDocument = root;
     body.parent = root;
     root.children.push(body);
 
+    root.body = body;
+    root.getElementById = (id) => root.querySelector(`#${id}`);
+    root.createElement = (tag) => {
+        const el = new MockElement(tag);
+        el.ownerDocument = root;
+        return el;
+    };
+
     // Problem statement
-    const probStmt = new MockElement('div', { class: 'problem-statement' });
+    const probStmt = root.createElement('div');
+    probStmt.attributes.class = 'problem-statement';
     probStmt.parent = body;
-    const header = new MockElement('div', { class: 'header' });
+    const header = root.createElement('div');
+    header.attributes.class = 'header';
     header.parent = probStmt;
-    const title = new MockElement('div', { class: 'title' }, titleText);
+    const title = root.createElement('div');
+    title.attributes.class = 'title';
+    title.textContent = titleText;
+    title.innerText = titleText;
     title.parent = header;
     header.children.push(title);
     probStmt.children.push(header);
 
     // Sample tests
-    const sampleTestsContainer = new MockElement('div', { class: 'sample-tests' });
+    const sampleTestsContainer = root.createElement('div');
+    sampleTestsContainer.attributes.class = 'sample-tests';
     sampleTestsContainer.parent = probStmt;
     for (const sample of samples) {
-        const sampleTest = new MockElement('div', { class: 'sample-test' });
+        const sampleTest = root.createElement('div');
+        sampleTest.attributes.class = 'sample-test';
         sampleTest.parent = sampleTestsContainer;
 
-        const inputDiv = new MockElement('div', { class: 'input' });
+        const inputDiv = root.createElement('div');
+        inputDiv.attributes.class = 'input';
         inputDiv.parent = sampleTest;
-        const inputPre = new MockElement('pre', {}, sample.input);
+        const inputPre = root.createElement('pre');
+        inputPre.textContent = sample.input;
+        inputPre.innerText = sample.input;
         inputPre.parent = inputDiv;
         inputDiv.children.push(inputPre);
 
-        const outputDiv = new MockElement('div', { class: 'output' });
+        const outputDiv = root.createElement('div');
+        outputDiv.attributes.class = 'output';
         outputDiv.parent = sampleTest;
-        const outputPre = new MockElement('pre', {}, sample.output);
+        const outputPre = root.createElement('pre');
+        outputPre.textContent = sample.output;
+        outputPre.innerText = sample.output;
         outputPre.parent = outputDiv;
         outputDiv.children.push(outputPre);
 
@@ -144,26 +264,38 @@ export function createMockDocument({ titleText, samples = [], formAttrs = {}, la
 
     // Form
     if (formAttrs) {
-        const form = new MockElement('form', { class: 'submit-form', action: formAttrs.action || '/submit', method: 'post' });
+        const form = root.createElement('form');
+        form.attributes.class = 'submit-form';
+        form.action = formAttrs.action || '/submit';
         form.parent = body;
-        const csrfInput = new MockElement('input', { type: 'hidden', name: 'csrf_token', value: formAttrs.csrfToken || 'secret_csrf' });
+        const csrfInput = root.createElement('input');
+        csrfInput.name = 'csrf_token';
+        csrfInput.value = formAttrs.csrfToken || 'secret_csrf';
         csrfInput.parent = form;
         form.children.push(csrfInput);
 
-        const langSelect = new MockElement('select', { name: 'programTypeId' });
+        const langSelect = root.createElement('select');
+        langSelect.name = 'programTypeId';
         langSelect.parent = form;
         for (const opt of langOptions) {
-            const option = new MockElement('option', { value: opt.value, selected: opt.selected }, opt.title);
+            const option = root.createElement('option');
+            option.value = opt.value;
+            option.selected = opt.selected;
+            option.textContent = opt.title;
+            option.innerText = opt.title;
             option.parent = langSelect;
-            langSelect.children.push(option);
+            langSelect.appendChild(option);
         }
         form.children.push(langSelect);
 
-        const problemInput = new MockElement('input', { type: 'text', name: 'submittedProblemCode', value: formAttrs.problemCode || 'G' });
+        const problemInput = root.createElement('input');
+        problemInput.name = 'submittedProblemCode';
+        problemInput.value = formAttrs.problemCode || 'G';
         problemInput.parent = form;
         form.children.push(problemInput);
 
-        const sourceTextarea = new MockElement('textarea', { name: 'source' }, '');
+        const sourceTextarea = root.createElement('textarea');
+        sourceTextarea.name = 'source';
         sourceTextarea.parent = form;
         form.children.push(sourceTextarea);
 

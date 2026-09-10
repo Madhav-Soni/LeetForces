@@ -1,10 +1,13 @@
 /**
  * LeetForces Control Panel
  * Injects a floating Run/Submit control bar into Codeforces problem pages.
+ * Displays ZERO personal user data.
  */
 
 import { getEditorValue } from './editorManager.js';
 import { runSampleTests } from './testRunner.js';
+import { populateLanguageSelector } from './languageMap.js';
+import { getPreferredLanguage, savePreferredLanguage } from './storage.js';
 
 const PANEL_ID = 'leetforces-control-panel';
 
@@ -33,23 +36,17 @@ function buildTestResultsHtml(results) {
     }).join('');
 }
 
-function getSelectedLanguageTitle(formDetails) {
-    const selected = (formDetails.availableLanguages || []).find(l => l.isSelected);
-    return selected ? selected.title : 'GNU G++20 (64 bit)';
-}
-
 /**
  * Injects the Run/Submit control panel into the page. Safe to call once;
  * subsequent calls return the existing panel instead of duplicating it.
  * @param {object} deps
- * @returns {HTMLElement}
+ * @returns {Promise<HTMLElement>}
  */
-export function injectControlPanel({
+export async function injectControlPanel({
     doc = document,
     editor,
     context,
     formDetails,
-    handle,
     submitSolution,
     pollVerdict,
     renderVerdict
@@ -71,6 +68,7 @@ export function injectControlPanel({
             <span style="color:#e2e8f0; font-weight:700; font-size:0.9rem;">LeetForces</span>
             <span style="color:#64748b; font-size:0.75rem;">${escapeHtml(context.problemKey || '')}</span>
         </div>
+        <select id="leetforces-lang-select" style="background:#1e293b; border:1px solid #334155; color:#e2e8f0; border-radius:6px; padding:6px 10px; font-size:0.8rem; width:100%; margin-bottom:10px; font-family:inherit;"></select>
         <div style="display:flex; gap:8px; margin-bottom:10px;">
             <button id="leetforces-run-btn" style="flex:1; padding:10px; border:none; border-radius:8px; background:#334155; color:#e2e8f0; font-weight:700; cursor:pointer;">Run</button>
             <button id="leetforces-submit-btn" style="flex:1; padding:10px; border:none; border-radius:8px; background:#22c55e; color:#052e16; font-weight:700; cursor:pointer;">Submit</button>
@@ -80,10 +78,30 @@ export function injectControlPanel({
     `;
     doc.body.appendChild(panel);
 
+    const langSelect = panel.querySelector('#leetforces-lang-select');
     const runBtn = panel.querySelector('#leetforces-run-btn');
     const submitBtn = panel.querySelector('#leetforces-submit-btn');
     const runResultsEl = panel.querySelector('#leetforces-run-results');
     const verdictEl = panel.querySelector('#leetforces-verdict-panel');
+
+    // Populate language selector with saved preference
+    const savedLang = await getPreferredLanguage();
+    const defaultSelected = (formDetails.availableLanguages || []).find(l => l.isSelected);
+    const preferredLang = savedLang || (defaultSelected ? defaultSelected.title : 'GNU G++20 (64 bit)');
+
+    populateLanguageSelector(langSelect, formDetails.availableLanguages, preferredLang);
+
+    // Save language choice on change
+    langSelect.addEventListener('change', () => {
+        const selectedText = langSelect.options[langSelect.selectedIndex]?.text;
+        if (selectedText) {
+            savePreferredLanguage(selectedText);
+        }
+    });
+
+    const getSelectedLangTitle = () => {
+        return langSelect.options[langSelect.selectedIndex]?.text || 'GNU G++20 (64 bit)';
+    };
 
     runBtn.addEventListener('click', async () => {
         runBtn.disabled = true;
@@ -92,7 +110,7 @@ export function injectControlPanel({
 
         try {
             const sourceCode = getEditorValue(editor);
-            const languageTitle = getSelectedLanguageTitle(formDetails);
+            const languageTitle = getSelectedLangTitle();
 
             const { overallPassed, results, error } = await runSampleTests({
                 languageTitle,
@@ -125,7 +143,7 @@ export function injectControlPanel({
 
         try {
             const sourceCode = getEditorValue(editor);
-            const languageTitle = getSelectedLanguageTitle(formDetails);
+            const languageTitle = getSelectedLangTitle();
 
             const result = await submitSolution(sourceCode, languageTitle);
 
@@ -134,15 +152,9 @@ export function injectControlPanel({
                 return;
             }
 
-            if (!handle) {
-                verdictEl.innerHTML = `<div style="color:#f59e0b; font-size:0.85rem; padding:8px 0;">Submitted (ID ${escapeHtml(result.submissionId || '?')}), but couldn't detect your handle to poll the verdict automatically. Check the status page directly.</div>`;
-                return;
-            }
-
             renderVerdict(verdictEl, { statusKey: 'TESTING', formattedText: 'Submitted, waiting for verdict...' });
 
             await pollVerdict({
-                handle,
                 submissionId: result.submissionId,
                 onUpdate: (verdictData) => renderVerdict(verdictEl, verdictData)
             });

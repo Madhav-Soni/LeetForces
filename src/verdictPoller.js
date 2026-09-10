@@ -1,10 +1,11 @@
 /**
  * Codeforces Verdict Poller Engine
- * Repeatedly queries Codeforces API for submission status until testing completes.
+ * Repeatedly queries Codeforces contest status API anonymously for submission status until testing completes.
+ * Uses ZERO personal user data or handles.
  */
 
 /**
- * Formats raw Codeforces API verdict into clean user-facing status details.
+ * Formats raw Codeforces API submission object into clean user-facing status details.
  * @param {object} submission - Submission object from Codeforces API
  * @returns {{
  *   statusKey: string,
@@ -135,14 +136,14 @@ export function formatVerdict(submission) {
 }
 
 /**
- * Fetches recent submissions for a handle from Codeforces public API.
- * @param {string} handle 
+ * Fetches recent submissions for a contest anonymously from Codeforces public API.
+ * @param {string|number} contestId 
  * @param {function} [fetchImpl] 
  * @returns {Promise<Array<object>>}
  */
-export async function fetchUserSubmissions(handle, fetchImpl = (typeof fetch !== 'undefined' ? fetch : null)) {
-    if (!handle || !fetchImpl) return [];
-    const url = `https://codeforces.com/api/user.status?handle=${encodeURIComponent(handle)}&from=1&count=10`;
+export async function fetchContestSubmissions(contestId, fetchImpl = (typeof fetch !== 'undefined' ? fetch : null)) {
+    if (!contestId || !fetchImpl) return [];
+    const url = `https://codeforces.com/api/contest.status?contestId=${encodeURIComponent(contestId)}&from=1&count=20`;
 
     try {
         const response = await fetchImpl(url);
@@ -158,11 +159,10 @@ export async function fetchUserSubmissions(handle, fetchImpl = (typeof fetch !==
 }
 
 /**
- * Polls Codeforces API for verdict of a specific submission.
+ * Polls Codeforces API anonymously for verdict of a specific submission.
  * @param {object} options 
- * @param {string} options.handle - User handle
  * @param {string|number} [options.submissionId] - Submission ID to match
- * @param {string|number} [options.contestId] - Contest ID fallback
+ * @param {string|number} [options.contestId] - Contest ID
  * @param {string} [options.problemIndex] - Problem Index fallback
  * @param {number} [options.intervalMs] - Polling interval in ms (default 2000)
  * @param {number} [options.maxAttempts] - Maximum polling attempts (default 30)
@@ -172,7 +172,6 @@ export async function fetchUserSubmissions(handle, fetchImpl = (typeof fetch !==
  */
 export async function pollVerdictForSubmission(options = {}) {
     const {
-        handle,
         submissionId,
         contestId,
         problemIndex,
@@ -187,7 +186,7 @@ export async function pollVerdictForSubmission(options = {}) {
     return new Promise(resolve => {
         const checkStatus = async () => {
             attempts++;
-            const submissions = await fetchUserSubmissions(handle, fetchImpl);
+            const submissions = await fetchContestSubmissions(contestId, fetchImpl);
 
             let matchedSub = null;
 
@@ -195,9 +194,8 @@ export async function pollVerdictForSubmission(options = {}) {
                 matchedSub = submissions.find(s => String(s.id) === String(submissionId));
             }
 
-            if (!matchedSub && contestId && problemIndex) {
+            if (!matchedSub && problemIndex) {
                 matchedSub = submissions.find(s => 
-                    String(s.contestId) === String(contestId) && 
                     s.problem && String(s.problem.index).toUpperCase() === String(problemIndex).toUpperCase()
                 );
             }

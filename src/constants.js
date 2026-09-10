@@ -24,5 +24,6 @@ export const DEFAULT_CURSOR_COLUMN = 9;
 export const STORAGE_KEYS = {
     CODE_PREFIX: 'leetforces_code_',
     LAST_PROBLEM_KEY: 'leetforces_last_problem_key',
+    PREFERRED_LANG: 'leetforces_preferred_lang',
     SETTINGS: 'leetforces_settings'
 };

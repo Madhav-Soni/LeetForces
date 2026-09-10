@@ -3,6 +3,11 @@
   "name": "LeetForces",
   "version": "1.0.0",
   "description": "Codeforces code editor pre-filling, problem context extraction, sample test suite, submission form integration, and real-time verdict tracking.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": [
     "storage",
     "activeTab"
