@@ -33,6 +33,8 @@ const moduleFiles = [
     'src/content.js'
 ];
 
+// pageBridge.js is NOT bundled - it runs in MAIN world and is loaded via manifest.json
+
 let bundleContent = `/**
  * LeetForces Extension Bundled Content Script
  * Generated automatically by scripts/build.js

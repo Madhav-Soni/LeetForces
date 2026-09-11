@@ -3,8 +3,9 @@
  * Maps human-readable names to Codeforces internal compiler IDs (programTypeId).
  */
 
-// Standard Codeforces Compiler Mapping
+// Standard Codeforces Compiler Mapping (updated for current Codeforces naming)
 export const KNOWN_COMPILER_MAP = {
+    'GNU G++20 13.2 (64 bit, winlibs)': '89',
     'GNU G++20 (64 bit)': '89',
     'GNU G++17 7.3.0': '54',
     'GNU G++23 64 bit': '91',

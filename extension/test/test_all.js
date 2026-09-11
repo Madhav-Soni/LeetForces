@@ -3,7 +3,7 @@ import { createMockDocument } from './mockDom.js';
 import { DEFAULT_CPP_TEMPLATE, DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN } from '../src/constants.js';
 import { extractProblemContext } from '../src/contextExtractor.js';
 import { extractSubmissionFormDetails } from '../src/formExtractor.js';
-import { computeCursorOffset } from '../src/editorManager.js';
+import { computeCursorOffset, detectEditor, getEditorValue } from '../src/editorManager.js';
 import { resolveLanguageId } from '../src/languageMap.js';
 import { submitSolutionToCodeforces } from '../src/submitter.js';
 import { formatVerdict, pollVerdictForSubmission } from '../src/verdictPoller.js';
@@ -158,6 +158,31 @@ console.log('\nTest 9: Validating Local Piston Sample Test Runner...');
 assert.strictEqual(resolvePistonLanguage('GNU G++20 (64 bit)'), 'cpp');
 assert.strictEqual(normalizeOutput('29  \r\n\r\n'), '29');
 console.log('  [PASS] Piston test runner maps languages and normalizes outputs correctly.');
+
+// 9. Verify Source Code Flows Through Run/Submit (Regression Test)
+console.log('\nTest 10: Validating Source Code Flows Through Run/Submit (Editor Integration)...');
+
+const testSourceCode = `#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    cout << "Hello from test code!" << endl;
+    return 0;
+}`;
+
+// Create a mock textarea element with test source code
+const mockTextarea = {
+    type: 'textarea',
+    element: null,
+    instance: {
+        value: testSourceCode
+    }
+};
+
+// Verify getEditorValue returns actual source code from mock editor
+const extractedCode = getEditorValue(mockTextarea);
+assert.strictEqual(extractedCode, testSourceCode, 'getEditorValue should return the actual source code from textarea instance');
+console.log('  [PASS] Source code flows correctly from editor through getEditorValue().');
 
 console.log('\n=================================================');
 console.log('  ALL AUTOMATED VERIFICATION TESTS PASSED SUCCESSFULLY! ');

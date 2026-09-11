@@ -212,7 +212,12 @@ export function injectControlPanel({
         runResultsEl.innerHTML = '';
 
         try {
-            const sourceCode = getEditorValue(editor);
+            let sourceCode = getEditorValue(editor);
+            // Fallback: if editor instance is missing, try direct DOM query
+            if (!sourceCode) {
+                const textarea = doc.querySelector('textarea[name="source"]') || doc.querySelector('textarea');
+                if (textarea) sourceCode = textarea.value;
+            }
             const languageTitle = getSelectedLanguageTitle(formDetails, langSelect);
 
             const { overallPassed, results, error } = await runSampleTests({
@@ -240,7 +245,12 @@ export function injectControlPanel({
         verdictEl.innerHTML = '';
 
         try {
-            const sourceCode = getEditorValue(editor);
+            let sourceCode = getEditorValue(editor);
+            // Fallback: if editor instance is missing, try direct DOM query
+            if (!sourceCode) {
+                const textarea = doc.querySelector('textarea[name="source"]') || doc.querySelector('textarea');
+                if (textarea) sourceCode = textarea.value;
+            }
             const languageTitle = getSelectedLanguageTitle(formDetails, langSelect);
 
             const result = await submitSolution(sourceCode, languageTitle);

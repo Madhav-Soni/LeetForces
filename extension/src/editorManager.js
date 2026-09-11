@@ -104,7 +104,11 @@ function detectEditorDirect(doc = document) {
         'form[action*="submit"] textarea[name="source"]',
         'textarea#sourceCodeTextarea',
         'textarea[name="source"]',
-        'textarea.source-code'
+        'textarea.source-code',
+        'textarea.program-source-text',
+        'div.source textarea',
+        'div.input textarea',
+        'textarea'
     ];
 
     for (const selector of textareaSelectors) {

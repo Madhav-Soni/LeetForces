@@ -601,7 +601,11 @@ function detectEditorDirect(doc = document) {
         'form[action*="submit"] textarea[name="source"]',
         'textarea#sourceCodeTextarea',
         'textarea[name="source"]',
-        'textarea.source-code'
+        'textarea.source-code',
+        'textarea.program-source-text',
+        'div.source textarea',
+        'div.input textarea',
+        'textarea'
     ];
 
     for (const selector of textareaSelectors) {
@@ -818,8 +822,9 @@ function attachAutoSaveListener(problemKey, editor) {
  * Maps human-readable names to Codeforces internal compiler IDs (programTypeId).
  */
 
-// Standard Codeforces Compiler Mapping
+// Standard Codeforces Compiler Mapping (updated for current Codeforces naming)
 const KNOWN_COMPILER_MAP = {
+    'GNU G++20 13.2 (64 bit, winlibs)': '89',
     'GNU G++20 (64 bit)': '89',
     'GNU G++17 7.3.0': '54',
     'GNU G++23 64 bit': '91',
@@ -1805,7 +1810,12 @@ function injectControlPanel({
         runResultsEl.innerHTML = '';
 
         try {
-            const sourceCode = getEditorValue(editor);
+            let sourceCode = getEditorValue(editor);
+            // Fallback: if editor instance is missing, try direct DOM query
+            if (!sourceCode) {
+                const textarea = doc.querySelector('textarea[name="source"]') || doc.querySelector('textarea');
+                if (textarea) sourceCode = textarea.value;
+            }
             const languageTitle = getSelectedLanguageTitle(formDetails, langSelect);
 
             const { overallPassed, results, error } = await runSampleTests({
@@ -1833,7 +1843,12 @@ function injectControlPanel({
         verdictEl.innerHTML = '';
 
         try {
-            const sourceCode = getEditorValue(editor);
+            let sourceCode = getEditorValue(editor);
+            // Fallback: if editor instance is missing, try direct DOM query
+            if (!sourceCode) {
+                const textarea = doc.querySelector('textarea[name="source"]') || doc.querySelector('textarea');
+                if (textarea) sourceCode = textarea.value;
+            }
             const languageTitle = getSelectedLanguageTitle(formDetails, langSelect);
 
             const result = await submitSolution(sourceCode, languageTitle);
@@ -1875,6 +1890,7 @@ function injectControlPanel({
  * Main Content Script for LeetForces
  * Orchestrates context extraction, form extraction, floating panel, submit, and verdict polling.
  */
+
 
 
 
@@ -1934,14 +1950,27 @@ async function initLeetForcesPage(doc = document) {
             const handle = extractLoggedInHandle(doc);
             console.log('[LeetForces] Extracted handle:', handle);
 
-            // Create a simple editor wrapper - for now, we'll use the CF textarea directly
-            // The floating panel doesn't have its own editor in this simplified version
-            const editor = {
-                getValue: () => {
-                    const textarea = doc.querySelector('textarea[name="source"]');
-                    return textarea ? textarea.value : '';
-                }
-            };
+            // Detect the actual editor on the page with retry logic
+            let editor = detectEditor(doc);
+            let retries = 0;
+            const maxRetries = 10;
+            
+            while ((!editor || !editor.instance) && retries < maxRetries) {
+                console.log(`[LeetForces] Editor detection retry ${retries + 1}/${maxRetries}...`);
+                await new Promise(r => setTimeout(r, 100));
+                editor = detectEditor(doc);
+                retries++;
+            }
+            
+            console.log('[LeetForces] Detected editor:', editor.type, 'instance:', !!editor.instance);
+
+            // Initialize the editor with template/saved code
+            if (editor && editor.instance) {
+                await initializeProblemEditor(context.problemKey, editor);
+                console.log('[LeetForces] Editor initialized with template/saved code');
+            } else {
+                console.warn('[LeetForces] Editor detection failed or no instance available after retries');
+            }
 
             injectControlPanel({
                 doc,

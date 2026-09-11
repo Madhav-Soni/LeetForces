@@ -11,6 +11,7 @@ import { pollVerdictForSubmission, formatVerdict } from './verdictPoller.js';
 import { renderVerdictPanel, getVerdictTheme } from './verdictUI.js';
 import { injectControlPanel } from './controlPanel.js';
 import { extractLoggedInHandle } from './handleExtractor.js';
+import { detectEditor, initializeProblemEditor } from './editorManager.js';
 
 export async function initLeetForcesPage(doc = document) {
     try {
@@ -61,14 +62,27 @@ export async function initLeetForcesPage(doc = document) {
             const handle = extractLoggedInHandle(doc);
             console.log('[LeetForces] Extracted handle:', handle);
 
-            // Create a simple editor wrapper - for now, we'll use the CF textarea directly
-            // The floating panel doesn't have its own editor in this simplified version
-            const editor = {
-                getValue: () => {
-                    const textarea = doc.querySelector('textarea[name="source"]');
-                    return textarea ? textarea.value : '';
-                }
-            };
+            // Detect the actual editor on the page with retry logic
+            let editor = detectEditor(doc);
+            let retries = 0;
+            const maxRetries = 10;
+            
+            while ((!editor || !editor.instance) && retries < maxRetries) {
+                console.log(`[LeetForces] Editor detection retry ${retries + 1}/${maxRetries}...`);
+                await new Promise(r => setTimeout(r, 100));
+                editor = detectEditor(doc);
+                retries++;
+            }
+            
+            console.log('[LeetForces] Detected editor:', editor.type, 'instance:', !!editor.instance);
+
+            // Initialize the editor with template/saved code
+            if (editor && editor.instance) {
+                await initializeProblemEditor(context.problemKey, editor);
+                console.log('[LeetForces] Editor initialized with template/saved code');
+            } else {
+                console.warn('[LeetForces] Editor detection failed or no instance available after retries');
+            }
 
             injectControlPanel({
                 doc,
