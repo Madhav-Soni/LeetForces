@@ -69,6 +69,12 @@ export async function initLeetForcesPage(doc = document) {
             
             while ((!editor || !editor.instance) && retries < maxRetries) {
                 console.log(`[LeetForces] Editor detection retry ${retries + 1}/${maxRetries}...`);
+                // Debug: log what textareas exist
+                const allTextareas = doc.querySelectorAll('textarea');
+                console.log(`[LeetForces] Found ${allTextareas.length} textarea(s) on page`);
+                allTextareas.forEach((ta, i) => {
+                    console.log(`[LeetForces] Textarea ${i}: name="${ta.name}", id="${ta.id}", class="${ta.className}"`);
+                });
                 await new Promise(r => setTimeout(r, 100));
                 editor = detectEditor(doc);
                 retries++;
