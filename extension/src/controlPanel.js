@@ -53,16 +53,32 @@ function buildTestResultHtml(r) {
     const variant = badgeVariant(r.status);
     const label = r.passed ? 'Pass' : r.status.replace(/_/g, ' ').toLowerCase();
     const showDiff = !r.passed && r.status !== 'SKIPPED';
+    const colors = {
+        success: '#4ade80',
+        error: '#f87171',
+        warning: '#fbbf24',
+        neutral: '#a1a1aa',
+        info: '#60a5fa'
+    };
+    const bgColors = {
+        success: 'rgba(74, 222, 128, 0.10)',
+        error: 'rgba(248, 113, 113, 0.10)',
+        warning: 'rgba(251, 191, 36, 0.10)',
+        neutral: 'rgba(161, 161, 170, 0.10)',
+        info: 'rgba(96, 165, 250, 0.10)'
+    };
+    const color = colors[variant] || colors.neutral;
+    const bgColor = bgColors[variant] || bgColors.neutral;
 
     return `
-        <div class="lf-alert lf-alert-${alertVariantClass(variant)}">
-            <div class="lf-alert-title">
+        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-top:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
                 <span>Test ${r.index}</span>
-                <span class="lf-badge lf-badge-${variant}">${escapeHtml(label)}</span>
+                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${escapeHtml(label)}</span>
             </div>
             ${showDiff ? `
-                <div class="lf-alert-diff">Expected\n${escapeHtml(r.expected)}</div>
-                <div class="lf-alert-diff">Got\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
+                <div style="white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size:12px; color:#a1a1aa; background:#131316; border:1px solid #27272a; border-radius:6px; padding:8px; margin-top:4px;">Expected\n${escapeHtml(r.expected)}</div>
+                <div style="white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size:12px; color:#a1a1aa; background:#131316; border:1px solid #27272a; border-radius:6px; padding:8px; margin-top:4px;">Got\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
             ` : ''}
         </div>
     `;
@@ -70,23 +86,40 @@ function buildTestResultHtml(r) {
 
 function buildTestResultsHtml(results) {
     if (!results || results.length === 0) return '';
-    return `<div class="lf-results-stack">${results.map(buildTestResultHtml).join('')}</div>`;
+    return results.map(buildTestResultHtml).join('');
 }
 
 function buildRunSummaryHtml(overallPassed, count) {
-    const variant = overallPassed ? 'success' : 'error';
+    const color = overallPassed ? '#4ade80' : '#f87171';
+    const bgColor = overallPassed ? 'rgba(74, 222, 128, 0.10)' : 'rgba(248, 113, 113, 0.10)';
     return `
-        <div class="lf-alert lf-alert-${variant}">
-            <div class="lf-alert-title">
+        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-bottom:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
                 <span>${overallPassed ? 'All sample tests passed' : 'Some sample tests failed'}</span>
-                <span class="lf-badge lf-badge-${variant}">${count} test${count === 1 ? '' : 's'}</span>
+                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${count} test${count === 1 ? '' : 's'}</span>
             </div>
         </div>
     `;
 }
 
 function buildMessageHtml(text, variant = 'neutral') {
-    return `<div class="lf-alert lf-alert-${alertVariantClass(variant)}"><div class="lf-alert-title"><span>${escapeHtml(text)}</span></div></div>`;
+    const colors = {
+        success: '#4ade80',
+        error: '#f87171',
+        warning: '#fbbf24',
+        neutral: '#a1a1aa',
+        info: '#60a5fa'
+    };
+    const bgColors = {
+        success: 'rgba(74, 222, 128, 0.10)',
+        error: 'rgba(248, 113, 113, 0.10)',
+        warning: 'rgba(251, 191, 36, 0.10)',
+        neutral: 'rgba(161, 161, 170, 0.10)',
+        info: 'rgba(96, 165, 250, 0.10)'
+    };
+    const color = colors[variant] || colors.neutral;
+    const bgColor = bgColors[variant] || bgColors.neutral;
+    return `<div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px;"><div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;"><span>${escapeHtml(text)}</span></div></div>`;
 }
 
 function getSelectedLanguageTitle(formDetails, selectEl) {
@@ -120,37 +153,41 @@ export function injectControlPanel({
 
     const panel = doc.createElement('div');
     panel.id = PANEL_ID;
-    // Only positioning/sizing stays inline — all visual chrome (background,
-    // border, radius, color) is defined on #leetforces-control-panel in theme.css.
+    // Fallback inline styles in case CSS doesn't load
     panel.style.cssText = `
         position: fixed;
-        bottom: var(--lf-space-6);
-        right: var(--lf-space-6);
+        bottom: 24px;
+        right: 24px;
         z-index: 999999;
         width: 360px;
         max-height: 70vh;
         overflow-y: auto;
-        padding: var(--lf-space-4);
+        padding: 16px;
+        background: #0b0b0d;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        color: #f4f4f5;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     `;
 
     panel.innerHTML = `
-        <div class="lf-header">
-            <div class="lf-header-title">
-                <span class="lf-header-mark">${BRAND_MARK_SVG}</span>
+        <div class="lf-header" style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid #27272a;">
+            <div class="lf-header-title" style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:#f4f4f5;">
+                <span class="lf-header-mark" style="display:inline-flex; width:18px; height:18px; color:#6366f1; flex-shrink:0;">${BRAND_MARK_SVG}</span>
                 <span>LeetForces</span>
             </div>
-            <span class="lf-problem-key">${escapeHtml(context.problemKey || '')}</span>
+            <span class="lf-problem-key" style="font-size:12px; color:#a1a1aa; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;">${escapeHtml(context.problemKey || '')}</span>
         </div>
-        <div class="lf-toolbar">
-            <select id="leetforces-lang-select" class="lf-select" aria-label="Language"></select>
+        <div class="lf-toolbar" style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+            <select id="leetforces-lang-select" class="lf-select" aria-label="Language" style="appearance:none; -webkit-appearance:none; flex:1; min-width:0; height:34px; padding:0 24px 0 12px; background:#131316; border:1px solid #27272a; border-radius:8px; color:#f4f4f5; font-size:13px; font-family:inherit; cursor:pointer;"></select>
         </div>
-        <div class="lf-toolbar">
-            <button id="leetforces-run-btn" class="lf-btn lf-btn-secondary" type="button">Run</button>
-            <button id="leetforces-submit-btn" class="lf-btn lf-btn-primary" type="button">Submit</button>
+        <div class="lf-toolbar" style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+            <button id="leetforces-run-btn" class="lf-btn lf-btn-secondary" type="button" style="display:inline-flex; align-items:center; justify-content:center; height:34px; padding:0 16px; border:1px solid #27272a; border-radius:8px; background:#131316; color:#f4f4f5; font-size:13px; font-weight:500; font-family:inherit; cursor:pointer; flex:1;">Run</button>
+            <button id="leetforces-submit-btn" class="lf-btn lf-btn-primary" type="button" style="display:inline-flex; align-items:center; justify-content:center; height:34px; padding:0 16px; border:1px solid #6366f1; border-radius:8px; background:#6366f1; color:#f5f5ff; font-size:13px; font-weight:500; font-family:inherit; cursor:pointer; flex:1;">Submit</button>
         </div>
-        <div id="leetforces-run-results"></div>
-        <div id="leetforces-verdict-panel"></div>
+        <div id="leetforces-run-results" style="margin-top:8px;"></div>
+        <div id="leetforces-verdict-panel" style="margin-top:8px;"></div>
     `;
     doc.body.appendChild(panel);
 

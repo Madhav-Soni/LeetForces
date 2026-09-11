@@ -55,7 +55,25 @@ export function renderVerdictPanel(containerEl, verdictData = {}) {
 
     const theme = getVerdictTheme(statusKey);
     const memoryMb = (memoryBytes / (1024 * 1024)).toFixed(1);
-    const iconClass = theme.isPending ? 'lf-icon-pulse' : '';
+    
+    const colors = {
+        success: '#4ade80',
+        error: '#f87171',
+        warning: '#fbbf24',
+        neutral: '#a1a1aa',
+        info: '#60a5fa'
+    };
+    const bgColors = {
+        success: 'rgba(74, 222, 128, 0.10)',
+        error: 'rgba(248, 113, 113, 0.10)',
+        warning: 'rgba(251, 191, 36, 0.10)',
+        neutral: 'rgba(161, 161, 170, 0.10)',
+        info: 'rgba(96, 165, 250, 0.10)'
+    };
+    const color = colors[theme.variant] || colors.neutral;
+    const bgColor = bgColors[theme.variant] || bgColors.neutral;
+    
+    const iconStyle = theme.isPending ? 'animation: lfPulse 1.2s infinite ease-in-out;' : '';
 
     const metaParts = [];
     if (submissionId) metaParts.push(`ID <strong>${escapeHtml(String(submissionId))}</strong>`);
@@ -64,12 +82,19 @@ export function renderVerdictPanel(containerEl, verdictData = {}) {
     if (theme.isPending) metaParts.push('Updating in real time…');
 
     containerEl.innerHTML = `
-        <div class="lf-alert lf-alert-${theme.variant}">
-            <div class="lf-alert-title">
-                <span><span class="${iconClass}">${theme.icon}</span> ${escapeHtml(formattedText)}</span>
-                <span class="lf-badge lf-badge-${theme.variant}">${escapeHtml(theme.badgeLabel)}</span>
+        <style>
+            @keyframes lfPulse {
+                0% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.15); opacity: 0.7; }
+                100% { transform: scale(1); opacity: 1; }
+            }
+        </style>
+        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-top:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
+                <span><span style="${iconStyle}">${theme.icon}</span> ${escapeHtml(formattedText)}</span>
+                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${escapeHtml(theme.badgeLabel)}</span>
             </div>
-            ${metaParts.length > 0 ? `<div class="lf-alert-meta">${metaParts.map(p => `<span>${p}</span>`).join('')}</div>` : ''}
+            ${metaParts.length > 0 ? `<div style="display:flex; gap:16px; font-size:12px; color:#a1a1aa; margin-top:4px;">${metaParts.map(p => `<span>${p}</span>`).join('')}</div>` : ''}
         </div>
     `;
 }

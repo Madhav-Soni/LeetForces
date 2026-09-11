@@ -337,6 +337,31 @@ function extractSubmissionFormDetails(doc = document, context = {}) {
 }
 
 
+/* --- src/handleExtractor.js --- */
+/**
+ * Codeforces Handle Extractor
+ * Extracts the currently logged-in user's handle from the page header,
+ * needed to poll their own submission list for verdicts.
+ */
+
+/**
+ * @param {Document} doc
+ * @returns {string|null}
+ */
+function extractLoggedInHandle(doc = document) {
+    // The header's profile link is the reliable place to look; other
+    // /profile/ links on the page (comments, standings) are not the viewer.
+    const header = doc.querySelector('#header') || doc;
+    const link = header.querySelector('a[href^="/profile/"]');
+    if (link) {
+        const match = link.getAttribute('href').match(/\/profile\/([^/?#]+)/);
+        if (match) return decodeURIComponent(match[1]);
+        if (link.textContent) return link.textContent.trim();
+    }
+    return null;
+}
+
+
 /* --- src/storage.js --- */
 /**
  * Storage Abstraction for LeetForces
@@ -1465,98 +1490,41 @@ async function pollVerdictForSubmission(options = {}) {
 /* --- src/verdictUI.js --- */
 /**
  * Codeforces Verdict UI Renderer
- * Renders submission verdicts with distinct colors, badges, metrics, and animated pending states.
+ * Renders submission verdicts as a shadcn-style "alert": a soft tinted
+ * background with a colored left border, plus a small low-contrast badge
+ * for the status label. All colors come from theme.css's semantic tokens
+ * via CSS classes — this module has no hardcoded hex values in its markup.
  */
 
+// Mirrors the semantic tokens in theme.css. Kept here (not read from the
+// DOM) so getVerdictTheme stays a pure, easily-testable function; keep
+// these in sync with --lf-success / --lf-error / --lf-warning / --lf-neutral / --lf-info.
+const VERDICT_THEMES = {
+    ACCEPTED: { variant: 'success', color: '#4ade80', badgeLabel: 'Accepted', icon: '✓', isPending: false },
+    OK: { variant: 'success', color: '#4ade80', badgeLabel: 'Accepted', icon: '✓', isPending: false },
+    WRONG_ANSWER: { variant: 'error', color: '#f87171', badgeLabel: 'Wrong answer', icon: '✕', isPending: false },
+    TIME_LIMIT_EXCEEDED: { variant: 'warning', color: '#fbbf24', badgeLabel: 'Time limit exceeded', icon: '⏱', isPending: false },
+    MEMORY_LIMIT_EXCEEDED: { variant: 'warning', color: '#fbbf24', badgeLabel: 'Memory limit exceeded', icon: '💾', isPending: false },
+    RUNTIME_ERROR: { variant: 'error', color: '#f87171', badgeLabel: 'Runtime error', icon: '💥', isPending: false },
+    COMPILATION_ERROR: { variant: 'neutral', color: '#a1a1aa', badgeLabel: 'Compilation error', icon: '⚡', isPending: false },
+    CHALLENGED: { variant: 'error', color: '#f87171', badgeLabel: 'Hacked', icon: '🎯', isPending: false },
+    TESTING: { variant: 'info', color: '#60a5fa', badgeLabel: 'Testing', icon: '⏳', isPending: true }
+};
+
 /**
- * Returns color, background, border, badge, and icon tokens for a given verdict statusKey.
- * @param {string} statusKey 
- * @returns {{
- *   color: string,
- *   bgColor: string,
- *   borderColor: string,
- *   badgeLabel: string,
- *   icon: string,
- *   isPending: boolean
- * }}
+ * Returns theme tokens for a given verdict statusKey.
+ * @param {string} statusKey
+ * @returns {{ variant: string, color: string, badgeLabel: string, icon: string, isPending: boolean }}
  */
 function getVerdictTheme(statusKey = 'TESTING') {
-    switch (statusKey) {
-        case 'ACCEPTED':
-        case 'OK':
-            return {
-                color: '#22c55e',
-                bgColor: 'rgba(34, 197, 94, 0.12)',
-                borderColor: 'rgba(34, 197, 94, 0.4)',
-                badgeLabel: 'ACCEPTED',
-                icon: '✓',
-                isPending: false
-            };
-        case 'WRONG_ANSWER':
-            return {
-                color: '#ef4444',
-                bgColor: 'rgba(239, 68, 68, 0.12)',
-                borderColor: 'rgba(239, 68, 68, 0.4)',
-                badgeLabel: 'WRONG ANSWER',
-                icon: '✕',
-                isPending: false
-            };
-        case 'TIME_LIMIT_EXCEEDED':
-            return {
-                color: '#f59e0b',
-                bgColor: 'rgba(245, 158, 11, 0.12)',
-                borderColor: 'rgba(245, 158, 11, 0.4)',
-                badgeLabel: 'TIME LIMIT EXCEEDED',
-                icon: '⏱',
-                isPending: false
-            };
-        case 'MEMORY_LIMIT_EXCEEDED':
-            return {
-                color: '#f59e0b',
-                bgColor: 'rgba(245, 158, 11, 0.12)',
-                borderColor: 'rgba(245, 158, 11, 0.4)',
-                badgeLabel: 'MEMORY LIMIT EXCEEDED',
-                icon: '💾',
-                isPending: false
-            };
-        case 'RUNTIME_ERROR':
-            return {
-                color: '#f59e0b',
-                bgColor: 'rgba(245, 158, 11, 0.12)',
-                borderColor: 'rgba(245, 158, 11, 0.4)',
-                badgeLabel: 'RUNTIME ERROR',
-                icon: '💥',
-                isPending: false
-            };
-        case 'COMPILATION_ERROR':
-            return {
-                color: '#94a3b8',
-                bgColor: 'rgba(148, 163, 184, 0.12)',
-                borderColor: 'rgba(148, 163, 184, 0.4)',
-                badgeLabel: 'COMPILATION ERROR',
-                icon: '⚡',
-                isPending: false
-            };
-        case 'CHALLENGED':
-            return {
-                color: '#ec4899',
-                bgColor: 'rgba(236, 72, 153, 0.12)',
-                borderColor: 'rgba(236, 72, 153, 0.4)',
-                badgeLabel: 'HACKED',
-                icon: '🎯',
-                isPending: false
-            };
-        case 'TESTING':
-        default:
-            return {
-                color: '#38bdf8',
-                bgColor: 'rgba(56, 189, 248, 0.12)',
-                borderColor: 'rgba(56, 189, 248, 0.4)',
-                badgeLabel: 'TESTING',
-                icon: '⏳',
-                isPending: true
-            };
-    }
+    return VERDICT_THEMES[statusKey] || VERDICT_THEMES.TESTING;
+}
+
+function escapeHtml(str = '') {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 /**
@@ -1577,51 +1545,46 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
 
     const theme = getVerdictTheme(statusKey);
     const memoryMb = (memoryBytes / (1024 * 1024)).toFixed(1);
+    
+    const colors = {
+        success: '#4ade80',
+        error: '#f87171',
+        warning: '#fbbf24',
+        neutral: '#a1a1aa',
+        info: '#60a5fa'
+    };
+    const bgColors = {
+        success: 'rgba(74, 222, 128, 0.10)',
+        error: 'rgba(248, 113, 113, 0.10)',
+        warning: 'rgba(251, 191, 36, 0.10)',
+        neutral: 'rgba(161, 161, 170, 0.10)',
+        info: 'rgba(96, 165, 250, 0.10)'
+    };
+    const color = colors[theme.variant] || colors.neutral;
+    const bgColor = bgColors[theme.variant] || bgColors.neutral;
+    
+    const iconStyle = theme.isPending ? 'animation: lfPulse 1.2s infinite ease-in-out;' : '';
 
-    containerEl.className = 'leetforces-verdict-card';
-    containerEl.style.cssText = `
-        background: ${theme.bgColor};
-        border: 1px solid ${theme.borderColor};
-        color: ${theme.color};
-        padding: 16px;
-        border-radius: 10px;
-        font-family: system-ui, -apple-system, sans-serif;
-        margin-top: 12px;
-        transition: all 0.3s ease;
-    `;
-
-    const spinnerStyle = theme.isPending ? `
-        @keyframes leetforcesPulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.15); opacity: 0.7; }
-            100% { transform: scale(1); opacity: 1; }
-        }
-        .leetforces-icon-spin {
-            display: inline-block;
-            animation: leetforcesPulse 1.2s infinite ease-in-out;
-        }
-    ` : '';
-
-    const iconHtml = theme.isPending 
-        ? `<span class="leetforces-icon-spin">${theme.icon}</span>` 
-        : `<span>${theme.icon}</span>`;
+    const metaParts = [];
+    if (submissionId) metaParts.push(`ID <strong>${escapeHtml(String(submissionId))}</strong>`);
+    if (timeMs > 0) metaParts.push(`<strong>${timeMs} ms</strong>`);
+    if (memoryBytes > 0) metaParts.push(`<strong>${memoryMb} MB</strong>`);
+    if (theme.isPending) metaParts.push('Updating in real time…');
 
     containerEl.innerHTML = `
-        <style>${spinnerStyle}</style>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <div style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.15rem;">
-                ${iconHtml}
-                <span>${formattedText}</span>
+        <style>
+            @keyframes lfPulse {
+                0% { transform: scale(1); opacity: 1; }
+                50% { transform: scale(1.15); opacity: 0.7; }
+                100% { transform: scale(1); opacity: 1; }
+            }
+        </style>
+        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-top:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
+                <span><span style="${iconStyle}">${theme.icon}</span> ${escapeHtml(formattedText)}</span>
+                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${escapeHtml(theme.badgeLabel)}</span>
             </div>
-            <span style="background: ${theme.borderColor}; color: ${theme.color}; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase;">
-                ${theme.badgeLabel}
-            </span>
-        </div>
-        <div style="display: flex; gap: 16px; font-size: 0.85rem; opacity: 0.9; margin-top: 6px;">
-            ${submissionId ? `<span>ID: <strong>${submissionId}</strong></span>` : ''}
-            ${timeMs > 0 ? `<span>Time: <strong>${timeMs} ms</strong></span>` : ''}
-            ${memoryBytes > 0 ? `<span>Memory: <strong>${memoryMb} MB</strong></span>` : ''}
-            ${theme.isPending ? `<span style="font-style: italic;">Updating in real-time...</span>` : ''}
+            ${metaParts.length > 0 ? `<div style="display:flex; gap:16px; font-size:12px; color:#a1a1aa; margin-top:4px;">${metaParts.map(p => `<span>${p}</span>`).join('')}</div>` : ''}
         </div>
     `;
 }
@@ -1629,22 +1592,25 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
 
 /* --- src/controlPanel.js --- */
 /**
- * LeetForces Workspace
- * LeetCode-style split view on Codeforces problem pages:
- * left = problem statement, right = language + editor + Run/Submit + live verdicts.
- * Submits through the logged-in Codeforces session — no file download/upload.
+ * LeetForces Control Panel
+ * Injects a floating Run/Submit control bar into Codeforces problem pages.
+ * All visual styling comes from the token + component classes defined in
+ * theme.css (loaded once via manifest content_scripts.css) — no hardcoded
+ * hex colors or magic-number spacing live here.
  */
 
 
 
 
 
+const PANEL_ID = 'leetforces-control-panel';
 
-
-
-const WORKSPACE_ID = 'leetforces-workspace';
-const PANEL_ID = 'leetforces-control-panel'; // kept for tests / legacy queries
-const DEFAULT_LANG = 'GNU G++20 (64 bit)';
+// Single-color mark, sized to match --lf-header-mark (18px box). No animation.
+const BRAND_MARK_SVG = `
+<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M5 4L11 12L5 20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M13 20H19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+</svg>`;
 
 function escapeHtml(str = '') {
     return String(str)
@@ -1653,394 +1619,208 @@ function escapeHtml(str = '') {
         .replace(/>/g, '&gt;');
 }
 
-function el(doc, tag, attrs = {}, text) {
-    const node = doc.createElement(tag);
-    for (const [key, value] of Object.entries(attrs)) {
-        if (key === 'style') {
-            const css = typeof value === 'string'
-                ? value
-                : Object.entries(value).map(([k, v]) => `${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}:${v}`).join(';');
-            if (node.style) node.style.cssText = css;
-            else node.style = { cssText: css };
-        } else if (key === 'id') {
-            node.id = value;
-            if (typeof node.setAttribute === 'function') node.setAttribute('id', value);
-        } else if (typeof node.setAttribute === 'function') {
-            node.setAttribute(key, value);
-        } else {
-            node[key] = value;
-        }
-    }
-    if (text !== undefined) node.textContent = text;
-    return node;
+const STATUS_TO_BADGE_VARIANT = {
+    PASSED: 'success',
+    ACCEPTED: 'success',
+    WRONG_ANSWER: 'error',
+    RUNTIME_ERROR: 'error',
+    ERROR: 'error',
+    COMPILATION_ERROR: 'warning',
+    TIME_LIMIT_EXCEEDED: 'warning',
+    MEMORY_LIMIT_EXCEEDED: 'warning',
+    SKIPPED: 'neutral',
+    TESTING: 'info'
+};
+
+function badgeVariant(status) {
+    return STATUS_TO_BADGE_VARIANT[status] || 'neutral';
 }
 
-function placeCursorInTextarea(textarea, line, col) {
-    try {
-        if (!textarea || typeof textarea.setSelectionRange !== 'function') return;
-        const offset = computeCursorOffset(String(textarea.value || ''), line, col);
-        if (typeof textarea.focus === 'function') textarea.focus();
-        textarea.setSelectionRange(offset, offset);
-    } catch (_) { /* ignore */ }
+function alertVariantClass(variant) {
+    if (variant === 'success' || variant === 'warning' || variant === 'info') return variant;
+    if (variant === 'neutral') return 'neutral';
+    return 'error';
 }
 
-function safeSaveCode(problemKey, code) {
-    if (!problemKey || typeof code !== 'string' || !code.trim()) return;
-    try {
-        const p = saveCode(problemKey, code);
-        if (p && typeof p.catch === 'function') p.catch(() => {});
-    } catch (_) { /* ignore */ }
+function buildTestResultHtml(r) {
+    const variant = badgeVariant(r.status);
+    const label = r.passed ? 'Pass' : r.status.replace(/_/g, ' ').toLowerCase();
+    const showDiff = !r.passed && r.status !== 'SKIPPED';
+    const colors = {
+        success: '#4ade80',
+        error: '#f87171',
+        warning: '#fbbf24',
+        neutral: '#a1a1aa',
+        info: '#60a5fa'
+    };
+    const bgColors = {
+        success: 'rgba(74, 222, 128, 0.10)',
+        error: 'rgba(248, 113, 113, 0.10)',
+        warning: 'rgba(251, 191, 36, 0.10)',
+        neutral: 'rgba(161, 161, 170, 0.10)',
+        info: 'rgba(96, 165, 250, 0.10)'
+    };
+    const color = colors[variant] || colors.neutral;
+    const bgColor = bgColors[variant] || bgColors.neutral;
+
+    return `
+        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-top:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
+                <span>Test ${r.index}</span>
+                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${escapeHtml(label)}</span>
+            </div>
+            ${showDiff ? `
+                <div style="white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size:12px; color:#a1a1aa; background:#131316; border:1px solid #27272a; border-radius:6px; padding:8px; margin-top:4px;">Expected\n${escapeHtml(r.expected)}</div>
+                <div style="white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size:12px; color:#a1a1aa; background:#131316; border:1px solid #27272a; border-radius:6px; padding:8px; margin-top:4px;">Got\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
+            ` : ''}
+        </div>
+    `;
 }
 
 function buildTestResultsHtml(results) {
     if (!results || results.length === 0) return '';
-    return results.map(r => {
-        const color = r.passed ? '#22c55e' : (r.status === 'SKIPPED' ? '#64748b' : '#ef4444');
-        const label = r.passed ? 'PASS' : String(r.status || '').replace(/_/g, ' ');
-        const showDiff = !r.passed && r.status !== 'SKIPPED';
-        return `
-            <div style="border-left:3px solid ${color}; padding:8px 10px; margin-top:8px; font-size:12px; font-family:ui-monospace,Menlo,monospace;">
-                <div style="color:${color}; font-weight:700;">Case ${r.index}: ${label}</div>
-                ${showDiff ? `
-                    <div style="opacity:0.9; white-space:pre-wrap; margin-top:4px; color:#cbd5e1;">Expected:\n${escapeHtml(r.expected)}</div>
-                    <div style="opacity:0.9; white-space:pre-wrap; margin-top:4px; color:#cbd5e1;">Output:\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
-                ` : ''}
+    return results.map(buildTestResultHtml).join('');
+}
+
+function buildRunSummaryHtml(overallPassed, count) {
+    const color = overallPassed ? '#4ade80' : '#f87171';
+    const bgColor = overallPassed ? 'rgba(74, 222, 128, 0.10)' : 'rgba(248, 113, 113, 0.10)';
+    return `
+        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-bottom:8px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
+                <span>${overallPassed ? 'All sample tests passed' : 'Some sample tests failed'}</span>
+                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${count} test${count === 1 ? '' : 's'}</span>
             </div>
-        `;
-    }).join('');
-}
-
-function renderLocalVerdict(container, verdictData = {}) {
-    if (!container) return;
-    const {
-        statusKey = 'TESTING',
-        formattedText = 'Testing...',
-        submissionId = null,
-        timeMs = 0,
-        memoryBytes = 0
-    } = verdictData;
-    const theme = getVerdictTheme(statusKey);
-    const memoryMb = memoryBytes ? (memoryBytes / (1024 * 1024)).toFixed(1) : null;
-
-    container.style.cssText = `
-        margin-top: 8px; padding: 12px 14px; border-radius: 10px;
-        background: ${theme.bgColor}; border: 1px solid ${theme.borderColor}; color: ${theme.color};
-        font-family: system-ui, -apple-system, sans-serif;
-    `;
-    container.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <div style="font-weight:750; font-size:15px;">${theme.icon} ${escapeHtml(formattedText)}</div>
-            <span style="font-size:11px; font-weight:700; letter-spacing:0.04em; padding:3px 8px; border-radius:999px; background:${theme.borderColor};">${escapeHtml(theme.badgeLabel)}</span>
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:12px; margin-top:8px; font-size:12px; opacity:0.95;">
-            ${submissionId ? `<span>Submission <strong>${escapeHtml(String(submissionId))}</strong></span>` : ''}
-            ${timeMs > 0 ? `<span>Time <strong>${timeMs} ms</strong></span>` : ''}
-            ${memoryMb ? `<span>Memory <strong>${memoryMb} MB</strong></span>` : ''}
-            ${theme.isPending ? `<span style="font-style:italic;">Polling Codeforces…</span>` : ''}
         </div>
     `;
 }
+
+function buildMessageHtml(text, variant = 'neutral') {
+    const colors = {
+        success: '#4ade80',
+        error: '#f87171',
+        warning: '#fbbf24',
+        neutral: '#a1a1aa',
+        info: '#60a5fa'
+    };
+    const bgColors = {
+        success: 'rgba(74, 222, 128, 0.10)',
+        error: 'rgba(248, 113, 113, 0.10)',
+        warning: 'rgba(251, 191, 36, 0.10)',
+        neutral: 'rgba(161, 161, 170, 0.10)',
+        info: 'rgba(96, 165, 250, 0.10)'
+    };
+    const color = colors[variant] || colors.neutral;
+    const bgColor = bgColors[variant] || bgColors.neutral;
+    return `<div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px;"><div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;"><span>${escapeHtml(text)}</span></div></div>`;
+}
+
+function getSelectedLanguageTitle(formDetails, selectEl) {
+    if (selectEl && selectEl.value) {
+        const opt = (formDetails.availableLanguages || []).find(l => String(l.value) === String(selectEl.value));
+        if (opt) return opt.title;
+    }
+    const selected = (formDetails.availableLanguages || []).find(l => l.isSelected);
+    return selected ? selected.title : 'GNU G++20 (64 bit)';
+}
+
 
 /**
- * Injects LeetCode-style workspace. Safe to call multiple times (rebuilds).
- * @returns {Promise<HTMLElement>}
+ * Injects the Run/Submit control panel into the page. Safe to call once;
+ * subsequent calls return the existing panel instead of duplicating it.
+ * @param {object} deps
+ * @returns {HTMLElement}
  */
-async function injectControlPanel({
+function injectControlPanel({
     doc = document,
-    context = {},
-    formDetails = {},
+    editor,
+    context,
+    formDetails,
+    handle,
     submitSolution,
     pollVerdict,
     renderVerdict
 }) {
-    const prev = doc.getElementById(WORKSPACE_ID) || doc.getElementById(PANEL_ID);
-    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+    const existing = doc.getElementById(PANEL_ID);
+    if (existing) return existing;
 
-    // Hide native CF chrome while workspace is active
-    const body = doc.body;
-    if (!body) throw new Error('document.body is not available');
+    const panel = doc.createElement('div');
+    panel.id = PANEL_ID;
+    // Fallback inline styles in case CSS doesn't load
+    panel.style.cssText = `
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        z-index: 999999;
+        width: 360px;
+        max-height: 70vh;
+        overflow-y: auto;
+        padding: 16px;
+        background: #0b0b0d;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        color: #f4f4f5;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    `;
 
-    if (!doc.getElementById('leetforces-hide-native')) {
-        const style = el(doc, 'style', { id: 'leetforces-hide-native' });
-        style.textContent = `
-            body.leetforces-active > *:not(#leetforces-workspace):not(script):not(style) { display: none !important; }
-            #leetforces-workspace, #leetforces-workspace * { box-sizing: border-box; }
-            #leetforces-workspace pre, #leetforces-workspace .problem-statement {
-                white-space: pre-wrap; word-break: break-word;
-            }
-            #leetforces-code-editor:focus { outline: 1px solid #38bdf8; outline-offset: -1px; }
-            #leetforces-run-btn:hover, #leetforces-submit-btn:hover { filter: brightness(1.08); }
-            #leetforces-run-btn:disabled, #leetforces-submit-btn:disabled { opacity: 0.65; cursor: wait; }
-        `;
-        (doc.head || body).appendChild(style);
-    }
-    if (body.classList && body.classList.add) body.classList.add('leetforces-active');
-    else body.className = `${body.className || ''} leetforces-active`.trim();
+    panel.innerHTML = `
+        <div class="lf-header" style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid #27272a;">
+            <div class="lf-header-title" style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:#f4f4f5;">
+                <span class="lf-header-mark" style="display:inline-flex; width:18px; height:18px; color:#6366f1; flex-shrink:0;">${BRAND_MARK_SVG}</span>
+                <span>LeetForces</span>
+            </div>
+            <span class="lf-problem-key" style="font-size:12px; color:#a1a1aa; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;">${escapeHtml(context.problemKey || '')}</span>
+        </div>
+        <div class="lf-toolbar" style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+            <select id="leetforces-lang-select" class="lf-select" aria-label="Language" style="appearance:none; -webkit-appearance:none; flex:1; min-width:0; height:34px; padding:0 24px 0 12px; background:#131316; border:1px solid #27272a; border-radius:8px; color:#f4f4f5; font-size:13px; font-family:inherit; cursor:pointer;"></select>
+        </div>
+        <div class="lf-toolbar" style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+            <button id="leetforces-run-btn" class="lf-btn lf-btn-secondary" type="button" style="display:inline-flex; align-items:center; justify-content:center; height:34px; padding:0 16px; border:1px solid #27272a; border-radius:8px; background:#131316; color:#f4f4f5; font-size:13px; font-weight:500; font-family:inherit; cursor:pointer; flex:1;">Run</button>
+            <button id="leetforces-submit-btn" class="lf-btn lf-btn-primary" type="button" style="display:inline-flex; align-items:center; justify-content:center; height:34px; padding:0 16px; border:1px solid #6366f1; border-radius:8px; background:#6366f1; color:#f5f5ff; font-size:13px; font-weight:500; font-family:inherit; cursor:pointer; flex:1;">Submit</button>
+        </div>
+        <div id="leetforces-run-results" style="margin-top:8px;"></div>
+        <div id="leetforces-verdict-panel" style="margin-top:8px;"></div>
+    `;
+    doc.body.appendChild(panel);
 
-    const workspace = el(doc, 'div', {
-        id: WORKSPACE_ID,
-        style: `
-            position: fixed; inset: 0; z-index: 2147483000;
-            display: flex; flex-direction: column;
-            background: #0b1120; color: #e2e8f0;
-            font-family: system-ui, -apple-system, Segoe UI, sans-serif;
-        `
-    });
+    const langSelect = panel.querySelector('#leetforces-lang-select');
+    const runBtn = panel.querySelector('#leetforces-run-btn');
+    const submitBtn = panel.querySelector('#leetforces-submit-btn');
+    const runResultsEl = panel.querySelector('#leetforces-run-results');
+    const verdictEl = panel.querySelector('#leetforces-verdict-panel');
 
-    // Also expose legacy panel id on inner shell for tests
-    const shell = el(doc, 'div', {
-        id: PANEL_ID,
-        style: 'display:flex; flex-direction:column; height:100%; min-height:0;'
-    });
+    populateLanguageSelector(langSelect, formDetails.availableLanguages || [], '');
 
-    // Top bar
-    const top = el(doc, 'div', {
-        style: `
-            flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
-            gap:12px; padding:10px 14px; border-bottom:1px solid #1e293b; background:#0f172a;
-        `
-    });
-    const topLeft = el(doc, 'div', { style: 'display:flex; align-items:baseline; gap:10px; min-width:0;' });
-    topLeft.appendChild(el(doc, 'span', {
-        style: 'font-weight:800; font-size:15px; color:#f8fafc; letter-spacing:0.02em;'
-    }, 'LeetForces'));
-    topLeft.appendChild(el(doc, 'span', {
-        style: 'font-size:13px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'
-    }, context.problemName
-        ? `${context.problemIndex || ''}. ${context.problemName}`
-        : (context.problemKey || 'Problem')));
-    const topRight = el(doc, 'div', { style: 'display:flex; align-items:center; gap:8px;' });
-    const classicBtn = el(doc, 'button', {
-        id: 'leetforces-classic-btn',
-        type: 'button',
-        style: 'background:#1e293b; border:1px solid #334155; color:#cbd5e1; border-radius:8px; padding:7px 10px; font-size:12px; cursor:pointer;'
-    }, 'Classic CF');
-    topRight.appendChild(classicBtn);
-    top.appendChild(topLeft);
-    top.appendChild(topRight);
-
-    // Main split
-    const main = el(doc, 'div', {
-        style: 'flex:1 1 auto; display:flex; min-height:0;'
-    });
-
-    // Left: problem
-    const left = el(doc, 'div', {
-        id: 'leetforces-problem-pane',
-        style: `
-            flex: 1 1 48%; min-width: 280px; max-width: 55%;
-            overflow: auto; padding: 18px 20px 28px;
-            background: #111827; border-right: 1px solid #1e293b;
-            color: #e5e7eb; font-size: 14px; line-height: 1.55;
-        `
-    });
-    left.appendChild(el(doc, 'div', {
-        style: 'font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:12px;'
-    }, 'Problem'));
-
-    const statement = doc.querySelector && doc.querySelector('.problem-statement');
-    if (statement && typeof statement.cloneNode === 'function') {
-        const clone = statement.cloneNode(true);
-        // neutralize CF absolute positioning quirks
-        if (clone.style) clone.style.cssText = 'position:static; width:auto; max-width:100%;';
-        left.appendChild(clone);
-    } else {
-        left.appendChild(el(doc, 'div', { style: 'color:#94a3b8;' },
-            'Problem statement could not be cloned. Use Classic CF to read it on the original page.'));
-    }
-
-    // Right: IDE
-    const right = el(doc, 'div', {
-        style: 'flex:1 1 52%; min-width:320px; display:flex; flex-direction:column; min-height:0; background:#0b1120;'
-    });
-
-    const toolbar = el(doc, 'div', {
-        style: `
-            flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:8px;
-            padding:10px 12px; border-bottom:1px solid #1e293b; background:#0f172a;
-        `
-    });
-
-    const langSelect = el(doc, 'select', {
-        id: 'leetforces-lang-select',
-        style: `
-            flex:1 1 220px; min-width:180px; background:#111827; border:1px solid #334155;
-            color:#e2e8f0; border-radius:8px; padding:8px 10px; font-size:13px;
-        `
-    });
-
-    const runBtn = el(doc, 'button', {
-        id: 'leetforces-run-btn',
-        type: 'button',
-        style: `
-            flex:0 0 auto; padding:8px 14px; border:none; border-radius:8px;
-            background:#334155; color:#f8fafc; font-weight:700; font-size:13px; cursor:pointer;
-        `
-    }, 'Run');
-
-    const submitBtn = el(doc, 'button', {
-        id: 'leetforces-submit-btn',
-        type: 'button',
-        style: `
-            flex:0 0 auto; padding:8px 16px; border:none; border-radius:8px;
-            background:#22c55e; color:#052e16; font-weight:800; font-size:13px; cursor:pointer;
-        `
-    }, 'Submit');
-
-    toolbar.appendChild(langSelect);
-    toolbar.appendChild(runBtn);
-    toolbar.appendChild(submitBtn);
-
-    const codeEditor = el(doc, 'textarea', {
-        id: 'leetforces-code-editor',
-        spellcheck: 'false',
-        style: `
-            flex:1 1 auto; min-height:220px; width:100%; resize:none; border:none;
-            padding:14px 16px; background:#020617; color:#e2e8f0;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-            font-size:13px; line-height:1.5; tab-size:4; white-space:pre; overflow:auto;
-        `
-    });
-
-    const consolePane = el(doc, 'div', {
-        id: 'leetforces-console',
-        style: `
-            flex:0 0 34%; min-height:140px; max-height:42%; overflow:auto;
-            border-top:1px solid #1e293b; background:#0f172a; padding:12px 14px;
-        `
-    });
-    consolePane.appendChild(el(doc, 'div', {
-        style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:6px;'
-    }, 'Console'));
-    const runResultsEl = el(doc, 'div', { id: 'leetforces-run-results' });
-    const verdictEl = el(doc, 'div', { id: 'leetforces-verdict-panel' });
-    consolePane.appendChild(runResultsEl);
-    consolePane.appendChild(verdictEl);
-
-    right.appendChild(toolbar);
-    right.appendChild(codeEditor);
-    right.appendChild(consolePane);
-
-    main.appendChild(left);
-    main.appendChild(right);
-
-    shell.appendChild(top);
-    shell.appendChild(main);
-    workspace.appendChild(shell);
-    body.appendChild(workspace);
-
-    // Language default: saved → G++20 (ignore CF page selection)
-    let preferredLang = DEFAULT_LANG;
-    try {
-        const savedLang = await getPreferredLanguage();
-        if (savedLang) preferredLang = savedLang;
-    } catch (_) { /* ignore */ }
-
-    populateLanguageSelector(
-        langSelect,
-        (formDetails && formDetails.availableLanguages) || [],
-        preferredLang
-    );
-
+    // Keep formDetails' isSelected flags in sync so submission uses the user's choice.
     langSelect.addEventListener('change', () => {
-        try {
-            const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-            if (opt && opt.text) savePreferredLanguage(opt.text);
-        } catch (_) { /* ignore */ }
+        (formDetails.availableLanguages || []).forEach(l => {
+            l.isSelected = String(l.value) === String(langSelect.value);
+        });
     });
-
-    // Code
-    const problemKey = context.problemKey || '';
-    let initialCode = DEFAULT_CPP_TEMPLATE;
-    try {
-        if (problemKey) {
-            const saved = await getSavedCode(problemKey);
-            if (typeof saved === 'string' && saved.trim()) initialCode = saved;
-            else safeSaveCode(problemKey, initialCode);
-        }
-    } catch (_) { /* ignore */ }
-    codeEditor.value = initialCode;
-    if (!String(codeEditor.value || '').trim()) codeEditor.value = DEFAULT_CPP_TEMPLATE;
-    if (String(codeEditor.value) === DEFAULT_CPP_TEMPLATE) {
-        setTimeout(() => placeCursorInTextarea(codeEditor, DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN), 40);
-    }
-
-    let saveTimer = null;
-    const persistCode = () => safeSaveCode(problemKey, String(codeEditor.value || ''));
-    codeEditor.addEventListener('input', () => {
-        if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(persistCode, 300);
-    });
-    codeEditor.addEventListener('keydown', (e) => {
-        if (!e || e.key !== 'Tab') return;
-        e.preventDefault();
-        try {
-            const start = codeEditor.selectionStart != null ? codeEditor.selectionStart : String(codeEditor.value || '').length;
-            const end = codeEditor.selectionEnd != null ? codeEditor.selectionEnd : start;
-            const value = String(codeEditor.value || '');
-            codeEditor.value = `${value.slice(0, start)}    ${value.slice(end)}`;
-            codeEditor.selectionStart = codeEditor.selectionEnd = start + 4;
-            persistCode();
-        } catch (_) { /* ignore */ }
-    });
-
-    classicBtn.addEventListener('click', () => {
-        try {
-            if (body.classList && body.classList.remove) body.classList.remove('leetforces-active');
-            if (workspace.parentNode) workspace.parentNode.removeChild(workspace);
-        } catch (_) { /* ignore */ }
-    });
-
-    const getSelectedLangTitle = () => {
-        try {
-            const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-            return (opt && opt.text) || DEFAULT_LANG;
-        } catch (_) {
-            return DEFAULT_LANG;
-        }
-    };
-
-    const getSourceCode = () => {
-        let code = '';
-        try { code = String(codeEditor.value != null ? codeEditor.value : ''); } catch (_) { code = ''; }
-        if (!code.trim()) {
-            code = DEFAULT_CPP_TEMPLATE;
-            try { codeEditor.value = code; } catch (_) { /* ignore */ }
-        }
-        return code.replace(/\s+$/, '');
-    };
-
-    const showVerdict = (data) => {
-        if (typeof renderVerdict === 'function') {
-            try { renderVerdict(verdictEl, data); return; } catch (_) { /* fall through */ }
-        }
-        renderLocalVerdict(verdictEl, data);
-    };
 
     runBtn.addEventListener('click', async () => {
         runBtn.disabled = true;
-        runBtn.textContent = 'Running…';
+        runBtn.textContent = 'Running...';
         runResultsEl.innerHTML = '';
-        verdictEl.innerHTML = '';
+
         try {
-            const sourceCode = getSourceCode();
+            const sourceCode = getEditorValue(editor);
+            const languageTitle = getSelectedLanguageTitle(formDetails, langSelect);
+
             const { overallPassed, results, error } = await runSampleTests({
-                languageTitle: getSelectedLangTitle(),
+                languageTitle,
                 sourceCode,
-                sampleTests: (context && context.sampleTests) || []
+                sampleTests: context.sampleTests
             });
+
             if (error) {
-                runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:13px;">${escapeHtml(error)}</div>`;
+                runResultsEl.innerHTML = buildMessageHtml(error, 'error');
             } else {
-                runResultsEl.innerHTML = `
-                    <div style="color:${overallPassed ? '#22c55e' : '#ef4444'}; font-weight:700; font-size:13px;">
-                        ${overallPassed ? `Accepted on all ${results.length} sample(s)` : 'Sample tests failed'}
-                    </div>
-                    ${buildTestResultsHtml(results)}
-                `;
+                runResultsEl.innerHTML = buildRunSummaryHtml(overallPassed, results.length) + buildTestResultsHtml(results);
             }
         } catch (err) {
-            runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:13px;">${escapeHtml((err && err.message) || 'Run failed')}</div>`;
+            runResultsEl.innerHTML = buildMessageHtml(err.message || 'Run failed', 'error');
         } finally {
             runBtn.disabled = false;
             runBtn.textContent = 'Run';
@@ -2049,51 +1829,44 @@ async function injectControlPanel({
 
     submitBtn.addEventListener('click', async () => {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Submitting…';
-        runResultsEl.innerHTML = '';
+        submitBtn.textContent = 'Submitting...';
         verdictEl.innerHTML = '';
+
         try {
-            const sourceCode = getSourceCode();
-            persistCode();
+            const sourceCode = getEditorValue(editor);
+            const languageTitle = getSelectedLanguageTitle(formDetails, langSelect);
 
-            if (typeof submitSolution !== 'function') {
-                throw new Error('Submit handler missing. Reload the extension and refresh this page.');
-            }
+            const result = await submitSolution(sourceCode, languageTitle);
 
-            showVerdict({ statusKey: 'TESTING', formattedText: 'Submitting to Codeforces…' });
-
-            const result = await submitSolution(sourceCode, getSelectedLangTitle());
-            if (!result || !result.success) {
-                showVerdict({
-                    statusKey: 'WRONG_ANSWER',
-                    formattedText: `Submission failed: ${(result && result.error) || 'unknown error'}`
-                });
-                // Override badge-ish styling for submit errors
-                verdictEl.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:4px 0;">Submission failed: ${escapeHtml((result && result.error) || 'unknown error')}</div>`;
+            if (!result.success) {
+                verdictEl.innerHTML = buildMessageHtml(`Submission failed: ${result.error || 'unknown error'}`, 'error');
                 return;
             }
 
-            showVerdict({
-                statusKey: 'TESTING',
-                formattedText: 'In queue… waiting for verdict',
-                submissionId: result.submissionId
-            });
-
-            if (typeof pollVerdict === 'function') {
-                await pollVerdict({
-                    submissionId: result.submissionId,
-                    onUpdate: (verdictData) => showVerdict(verdictData)
-                });
+            if (!handle) {
+                verdictEl.innerHTML = buildMessageHtml(
+                    `Submitted (ID ${result.submissionId || '?'}), but couldn't detect your handle to poll the verdict automatically.`,
+                    'warning'
+                );
+                return;
             }
+
+            renderVerdict(verdictEl, { statusKey: 'TESTING', formattedText: 'Submitted, waiting for verdict...' });
+
+            await pollVerdict({
+                handle,
+                submissionId: result.submissionId,
+                onUpdate: (verdictData) => renderVerdict(verdictEl, verdictData)
+            });
         } catch (err) {
-            verdictEl.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:4px 0;">${escapeHtml((err && err.message) || 'Submit failed')}</div>`;
+            verdictEl.innerHTML = buildMessageHtml(err.message || 'Submit failed', 'error');
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = 'Submit';
         }
     });
 
-    return shell;
+    return panel;
 }
 
 
@@ -2102,6 +1875,7 @@ async function injectControlPanel({
  * Main Content Script for LeetForces
  * Orchestrates context extraction, form extraction, floating panel, submit, and verdict polling.
  */
+
 
 
 
@@ -2157,10 +1931,24 @@ async function initLeetForcesPage(doc = document) {
         }
 
         if (context && context.problemKey) {
-            await injectControlPanel({
+            const handle = extractLoggedInHandle(doc);
+            console.log('[LeetForces] Extracted handle:', handle);
+
+            // Create a simple editor wrapper - for now, we'll use the CF textarea directly
+            // The floating panel doesn't have its own editor in this simplified version
+            const editor = {
+                getValue: () => {
+                    const textarea = doc.querySelector('textarea[name="source"]');
+                    return textarea ? textarea.value : '';
+                }
+            };
+
+            injectControlPanel({
                 doc,
+                editor,
                 context,
                 formDetails,
+                handle,
                 submitSolution: submitHandler,
                 pollVerdict: (opts) => pollVerdictForSubmission({
                     ...opts,

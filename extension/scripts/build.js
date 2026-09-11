@@ -21,6 +21,7 @@ const moduleFiles = [
     'src/constants.js',
     'src/contextExtractor.js',
     'src/formExtractor.js',
+    'src/handleExtractor.js',
     'src/storage.js',
     'src/editorManager.js',
     'src/languageMap.js',
