@@ -48,6 +48,9 @@ export function extractProblemContext(doc = document, currentUrl = window.locati
     if (contestMatch) {
         contestId = contestMatch[1];
         problemIndex = contestMatch[2].toUpperCase();
+        console.log('[LeetForces] URL parsed: contestId=' + contestId + ', problemIndex=' + problemIndex);
+    } else {
+        console.warn('[LeetForces] URL pattern did not match:', currentUrl);
     }
 
     // 2. DOM Parsing for Title & Index
