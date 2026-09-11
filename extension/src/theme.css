@@ -1,0 +1,309 @@
+/**
+ * LeetForces Design Tokens
+ * A small, hand-rolled design system in the visual language of shadcn/ui:
+ * neutral grays, low-saturation surfaces, one restrained accent, and
+ * semantic colors for verdict states. All custom properties are prefixed
+ * with --lf- so they never collide with anything on the host page.
+ *
+ * Loaded once via manifest.json's content_scripts.css — no runtime
+ * <style> injection needed.
+ */
+
+:root {
+    /* --- Neutral scale (dark, zinc-inspired) --- */
+    --lf-background: #0b0b0d;       /* panel background */
+    --lf-surface: #131316;          /* raised surfaces: cards, inputs */
+    --lf-surface-hover: #1c1c20;    /* hover state for surfaces/buttons */
+    --lf-border: #27272a;           /* default border */
+    --lf-border-strong: #3f3f46;    /* focus / emphasized border */
+    --lf-muted-foreground: #a1a1aa; /* secondary text */
+    --lf-foreground: #f4f4f5;       /* primary text */
+
+    /* --- Accent (restrained, used only for the primary action) --- */
+    --lf-accent: #6366f1;
+    --lf-accent-hover: #7477f3;
+    --lf-accent-foreground: #f5f5ff;
+
+    /* --- Semantic verdict colors (text tone + soft background tint) --- */
+    --lf-success: #4ade80;
+    --lf-success-bg: rgba(74, 222, 128, 0.10);
+    --lf-error: #f87171;
+    --lf-error-bg: rgba(248, 113, 113, 0.10);
+    --lf-warning: #fbbf24;
+    --lf-warning-bg: rgba(251, 191, 36, 0.10);
+    --lf-neutral: #a1a1aa;
+    --lf-neutral-bg: rgba(161, 161, 170, 0.10);
+    --lf-info: #60a5fa;
+    --lf-info-bg: rgba(96, 165, 250, 0.10);
+
+    /* --- Spacing scale --- */
+    --lf-space-1: 4px;
+    --lf-space-2: 8px;
+    --lf-space-3: 12px;
+    --lf-space-4: 16px;
+    --lf-space-6: 24px;
+    --lf-space-8: 32px;
+
+    /* --- Radius scale --- */
+    --lf-radius-sm: 6px;
+    --lf-radius-md: 8px;
+    --lf-radius-lg: 12px;
+
+    /* --- Font sizes --- */
+    --lf-text-xs: 12px;
+    --lf-text-sm: 13px;
+    --lf-text-base: 14px;
+    --lf-text-lg: 16px;
+
+    /* --- Motion --- */
+    --lf-transition-fast: 150ms ease;
+
+    /* --- Font stack --- */
+    --lf-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --lf-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* ==========================================================================
+   Component classes — a small hand-rolled system in shadcn/ui's visual
+   language. Everything references the tokens above; no magic numbers.
+   ========================================================================== */
+
+#leetforces-control-panel {
+    font-family: var(--lf-font-sans);
+    background: var(--lf-background);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-lg);
+    color: var(--lf-foreground);
+}
+
+.lf-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lf-space-2);
+    padding-bottom: var(--lf-space-3);
+    margin-bottom: var(--lf-space-3);
+    border-bottom: 1px solid var(--lf-border);
+}
+
+.lf-header-title {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    font-size: var(--lf-text-sm);
+    font-weight: 600;
+    color: var(--lf-foreground);
+}
+
+.lf-header-mark {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    color: var(--lf-accent);
+    flex-shrink: 0;
+}
+
+.lf-header-mark svg {
+    width: 100%;
+    height: 100%;
+}
+
+.lf-problem-key {
+    font-size: var(--lf-text-xs);
+    color: var(--lf-muted-foreground);
+    font-family: var(--lf-font-mono);
+}
+
+.lf-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--lf-space-2);
+    margin-bottom: var(--lf-space-3);
+}
+
+/* Select — shadcn-style: bordered surface, chevron, focus ring */
+.lf-select {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    padding: 0 var(--lf-space-6) 0 var(--lf-space-3);
+    background-color: var(--lf-surface);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23a1a1aa' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right var(--lf-space-2) center;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-md);
+    color: var(--lf-foreground);
+    font-size: var(--lf-text-sm);
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color var(--lf-transition-fast), background-color var(--lf-transition-fast);
+}
+
+.lf-select:hover {
+    border-color: var(--lf-border-strong);
+}
+
+.lf-select:focus-visible {
+    outline: none;
+    border-color: var(--lf-accent);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
+/* Buttons — neutral by default; only .lf-btn-primary carries saturated color */
+.lf-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 34px;
+    padding: 0 var(--lf-space-4);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-md);
+    background: var(--lf-surface);
+    color: var(--lf-foreground);
+    font-size: var(--lf-text-sm);
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color var(--lf-transition-fast), border-color var(--lf-transition-fast),
+        opacity var(--lf-transition-fast), transform var(--lf-transition-fast);
+}
+
+.lf-btn:hover:not(:disabled) {
+    background: var(--lf-surface-hover);
+    border-color: var(--lf-border-strong);
+    transform: translateY(-1px);
+}
+
+.lf-btn:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.lf-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(161, 161, 170, 0.25);
+}
+
+.lf-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.lf-btn-primary {
+    flex: 1;
+    background: var(--lf-accent);
+    border-color: var(--lf-accent);
+    color: var(--lf-accent-foreground);
+}
+
+.lf-btn-primary:hover:not(:disabled) {
+    background: var(--lf-accent-hover);
+    border-color: var(--lf-accent-hover);
+}
+
+.lf-btn-primary:focus-visible {
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+}
+
+.lf-btn-secondary {
+    flex: 1;
+}
+
+/* Alert — verdicts and per-test results share this shape: soft tinted
+   background, colored left border, no fully saturated blocks. */
+.lf-alert {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lf-space-1);
+    padding: var(--lf-space-3);
+    border-radius: var(--lf-radius-md);
+    border-left: 3px solid var(--lf-neutral);
+    background: var(--lf-neutral-bg);
+    font-size: var(--lf-text-sm);
+    animation: lfFadeSlideIn var(--lf-transition-fast);
+}
+
+.lf-alert-success { border-left-color: var(--lf-success); background: var(--lf-success-bg); }
+.lf-alert-error { border-left-color: var(--lf-error); background: var(--lf-error-bg); }
+.lf-alert-warning { border-left-color: var(--lf-warning); background: var(--lf-warning-bg); }
+.lf-alert-info { border-left-color: var(--lf-info); background: var(--lf-info-bg); }
+.lf-alert-neutral { border-left-color: var(--lf-neutral); background: var(--lf-neutral-bg); }
+
+.lf-alert-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--lf-space-2);
+    font-weight: 600;
+}
+
+.lf-alert-meta {
+    display: flex;
+    gap: var(--lf-space-4);
+    font-size: var(--lf-text-xs);
+    color: var(--lf-muted-foreground);
+}
+
+.lf-alert-diff {
+    white-space: pre-wrap;
+    font-family: var(--lf-font-mono);
+    font-size: var(--lf-text-xs);
+    color: var(--lf-muted-foreground);
+    background: var(--lf-surface);
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius-sm);
+    padding: var(--lf-space-2);
+}
+
+/* Badge — small, low-contrast background, higher-contrast text */
+.lf-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px var(--lf-space-2);
+    border-radius: var(--lf-radius-sm);
+    font-size: var(--lf-text-xs);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.lf-badge-success { background: var(--lf-success-bg); color: var(--lf-success); }
+.lf-badge-error { background: var(--lf-error-bg); color: var(--lf-error); }
+.lf-badge-warning { background: var(--lf-warning-bg); color: var(--lf-warning); }
+.lf-badge-neutral { background: var(--lf-neutral-bg); color: var(--lf-neutral); }
+.lf-badge-info { background: var(--lf-info-bg); color: var(--lf-info); }
+
+.lf-results-stack > * + * {
+    margin-top: var(--lf-space-2);
+}
+
+/* Pending-state icon pulse — used only for the "Testing" verdict icon */
+.lf-icon-pulse {
+    display: inline-block;
+    animation: lfPulse 1.2s infinite ease-in-out;
+}
+
+@keyframes lfPulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.15); opacity: 0.7; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Micro-interaction: new results/verdicts settle in instead of popping in */
+@keyframes lfFadeSlideIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lf-alert,
+    .lf-btn,
+    .lf-icon-pulse {
+        animation: none !important;
+        transition: none !important;
+    }
+    .lf-btn:hover:not(:disabled) {
+        transform: none;
+    }
+}

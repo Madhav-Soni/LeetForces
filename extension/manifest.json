@@ -1,13 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LeetForces",
-  "version": "1.2.0",
-  "description": "LeetCode-style Codeforces workspace: code, run samples, and submit with live AC/WA/TLE/MLE verdicts.",
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  },
+  "version": "1.0.0",
+  "description": "Codeforces code editor pre-filling, problem context extraction, sample test suite, submission form integration, and real-time verdict tracking.",
   "permissions": [
     "storage",
     "activeTab"
@@ -25,17 +20,7 @@
         "https://codeforces.com/gym/*/problem/*",
         "https://codeforces.com/group/*/contest/*/problem/*"
       ],
-      "js": ["src/pageBridge.js"],
-      "run_at": "document_idle",
-      "world": "MAIN"
-    },
-    {
-      "matches": [
-        "https://codeforces.com/contest/*/problem/*",
-        "https://codeforces.com/problemset/problem/*/*",
-        "https://codeforces.com/gym/*/problem/*",
-        "https://codeforces.com/group/*/contest/*/problem/*"
-      ],
+      "css": ["src/theme.css"],
       "js": ["dist/content.bundle.js"],
       "run_at": "document_idle"
     }

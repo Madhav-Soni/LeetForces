@@ -1,97 +1,40 @@
 /**
  * Codeforces Verdict UI Renderer
- * Renders submission verdicts with distinct colors, badges, metrics, and animated pending states.
+ * Renders submission verdicts as a shadcn-style "alert": a soft tinted
+ * background with a colored left border, plus a small low-contrast badge
+ * for the status label. All colors come from theme.css's semantic tokens
+ * via CSS classes — this module has no hardcoded hex values in its markup.
  */
 
+// Mirrors the semantic tokens in theme.css. Kept here (not read from the
+// DOM) so getVerdictTheme stays a pure, easily-testable function; keep
+// these in sync with --lf-success / --lf-error / --lf-warning / --lf-neutral / --lf-info.
+const VERDICT_THEMES = {
+    ACCEPTED: { variant: 'success', color: '#4ade80', badgeLabel: 'Accepted', icon: '✓', isPending: false },
+    OK: { variant: 'success', color: '#4ade80', badgeLabel: 'Accepted', icon: '✓', isPending: false },
+    WRONG_ANSWER: { variant: 'error', color: '#f87171', badgeLabel: 'Wrong answer', icon: '✕', isPending: false },
+    TIME_LIMIT_EXCEEDED: { variant: 'warning', color: '#fbbf24', badgeLabel: 'Time limit exceeded', icon: '⏱', isPending: false },
+    MEMORY_LIMIT_EXCEEDED: { variant: 'warning', color: '#fbbf24', badgeLabel: 'Memory limit exceeded', icon: '💾', isPending: false },
+    RUNTIME_ERROR: { variant: 'error', color: '#f87171', badgeLabel: 'Runtime error', icon: '💥', isPending: false },
+    COMPILATION_ERROR: { variant: 'neutral', color: '#a1a1aa', badgeLabel: 'Compilation error', icon: '⚡', isPending: false },
+    CHALLENGED: { variant: 'error', color: '#f87171', badgeLabel: 'Hacked', icon: '🎯', isPending: false },
+    TESTING: { variant: 'info', color: '#60a5fa', badgeLabel: 'Testing', icon: '⏳', isPending: true }
+};
+
 /**
- * Returns color, background, border, badge, and icon tokens for a given verdict statusKey.
- * @param {string} statusKey 
- * @returns {{
- *   color: string,
- *   bgColor: string,
- *   borderColor: string,
- *   badgeLabel: string,
- *   icon: string,
- *   isPending: boolean
- * }}
+ * Returns theme tokens for a given verdict statusKey.
+ * @param {string} statusKey
+ * @returns {{ variant: string, color: string, badgeLabel: string, icon: string, isPending: boolean }}
  */
 export function getVerdictTheme(statusKey = 'TESTING') {
-    switch (statusKey) {
-        case 'ACCEPTED':
-        case 'OK':
-            return {
-                color: '#22c55e',
-                bgColor: 'rgba(34, 197, 94, 0.12)',
-                borderColor: 'rgba(34, 197, 94, 0.4)',
-                badgeLabel: 'ACCEPTED',
-                icon: '✓',
-                isPending: false
-            };
-        case 'WRONG_ANSWER':
-            return {
-                color: '#ef4444',
-                bgColor: 'rgba(239, 68, 68, 0.12)',
-                borderColor: 'rgba(239, 68, 68, 0.4)',
-                badgeLabel: 'WRONG ANSWER',
-                icon: '✕',
-                isPending: false
-            };
-        case 'TIME_LIMIT_EXCEEDED':
-            return {
-                color: '#f59e0b',
-                bgColor: 'rgba(245, 158, 11, 0.12)',
-                borderColor: 'rgba(245, 158, 11, 0.4)',
-                badgeLabel: 'TIME LIMIT EXCEEDED',
-                icon: '⏱',
-                isPending: false
-            };
-        case 'MEMORY_LIMIT_EXCEEDED':
-            return {
-                color: '#f59e0b',
-                bgColor: 'rgba(245, 158, 11, 0.12)',
-                borderColor: 'rgba(245, 158, 11, 0.4)',
-                badgeLabel: 'MEMORY LIMIT EXCEEDED',
-                icon: '💾',
-                isPending: false
-            };
-        case 'RUNTIME_ERROR':
-            return {
-                color: '#f59e0b',
-                bgColor: 'rgba(245, 158, 11, 0.12)',
-                borderColor: 'rgba(245, 158, 11, 0.4)',
-                badgeLabel: 'RUNTIME ERROR',
-                icon: '💥',
-                isPending: false
-            };
-        case 'COMPILATION_ERROR':
-            return {
-                color: '#94a3b8',
-                bgColor: 'rgba(148, 163, 184, 0.12)',
-                borderColor: 'rgba(148, 163, 184, 0.4)',
-                badgeLabel: 'COMPILATION ERROR',
-                icon: '⚡',
-                isPending: false
-            };
-        case 'CHALLENGED':
-            return {
-                color: '#ec4899',
-                bgColor: 'rgba(236, 72, 153, 0.12)',
-                borderColor: 'rgba(236, 72, 153, 0.4)',
-                badgeLabel: 'HACKED',
-                icon: '🎯',
-                isPending: false
-            };
-        case 'TESTING':
-        default:
-            return {
-                color: '#38bdf8',
-                bgColor: 'rgba(56, 189, 248, 0.12)',
-                borderColor: 'rgba(56, 189, 248, 0.4)',
-                badgeLabel: 'TESTING',
-                icon: '⏳',
-                isPending: true
-            };
-    }
+    return VERDICT_THEMES[statusKey] || VERDICT_THEMES.TESTING;
+}
+
+function escapeHtml(str = '') {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 /**
@@ -112,51 +55,21 @@ export function renderVerdictPanel(containerEl, verdictData = {}) {
 
     const theme = getVerdictTheme(statusKey);
     const memoryMb = (memoryBytes / (1024 * 1024)).toFixed(1);
+    const iconClass = theme.isPending ? 'lf-icon-pulse' : '';
 
-    containerEl.className = 'leetforces-verdict-card';
-    containerEl.style.cssText = `
-        background: ${theme.bgColor};
-        border: 1px solid ${theme.borderColor};
-        color: ${theme.color};
-        padding: 16px;
-        border-radius: 10px;
-        font-family: system-ui, -apple-system, sans-serif;
-        margin-top: 12px;
-        transition: all 0.3s ease;
-    `;
-
-    const spinnerStyle = theme.isPending ? `
-        @keyframes leetforcesPulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.15); opacity: 0.7; }
-            100% { transform: scale(1); opacity: 1; }
-        }
-        .leetforces-icon-spin {
-            display: inline-block;
-            animation: leetforcesPulse 1.2s infinite ease-in-out;
-        }
-    ` : '';
-
-    const iconHtml = theme.isPending 
-        ? `<span class="leetforces-icon-spin">${theme.icon}</span>` 
-        : `<span>${theme.icon}</span>`;
+    const metaParts = [];
+    if (submissionId) metaParts.push(`ID <strong>${escapeHtml(String(submissionId))}</strong>`);
+    if (timeMs > 0) metaParts.push(`<strong>${timeMs} ms</strong>`);
+    if (memoryBytes > 0) metaParts.push(`<strong>${memoryMb} MB</strong>`);
+    if (theme.isPending) metaParts.push('Updating in real time…');
 
     containerEl.innerHTML = `
-        <style>${spinnerStyle}</style>
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <div style="display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.15rem;">
-                ${iconHtml}
-                <span>${formattedText}</span>
+        <div class="lf-alert lf-alert-${theme.variant}">
+            <div class="lf-alert-title">
+                <span><span class="${iconClass}">${theme.icon}</span> ${escapeHtml(formattedText)}</span>
+                <span class="lf-badge lf-badge-${theme.variant}">${escapeHtml(theme.badgeLabel)}</span>
             </div>
-            <span style="background: ${theme.borderColor}; color: ${theme.color}; padding: 3px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase;">
-                ${theme.badgeLabel}
-            </span>
-        </div>
-        <div style="display: flex; gap: 16px; font-size: 0.85rem; opacity: 0.9; margin-top: 6px;">
-            ${submissionId ? `<span>ID: <strong>${submissionId}</strong></span>` : ''}
-            ${timeMs > 0 ? `<span>Time: <strong>${timeMs} ms</strong></span>` : ''}
-            ${memoryBytes > 0 ? `<span>Memory: <strong>${memoryMb} MB</strong></span>` : ''}
-            ${theme.isPending ? `<span style="font-style: italic;">Updating in real-time...</span>` : ''}
+            ${metaParts.length > 0 ? `<div class="lf-alert-meta">${metaParts.map(p => `<span>${p}</span>`).join('')}</div>` : ''}
         </div>
     `;
 }

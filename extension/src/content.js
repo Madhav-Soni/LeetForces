@@ -10,6 +10,7 @@ import { submitSolutionToCodeforces } from './submitter.js';
 import { pollVerdictForSubmission, formatVerdict } from './verdictPoller.js';
 import { renderVerdictPanel, getVerdictTheme } from './verdictUI.js';
 import { injectControlPanel } from './controlPanel.js';
+import { extractLoggedInHandle } from './handleExtractor.js';
 
 export async function initLeetForcesPage(doc = document) {
     try {
@@ -57,10 +58,24 @@ export async function initLeetForcesPage(doc = document) {
         }
 
         if (context && context.problemKey) {
-            await injectControlPanel({
+            const handle = extractLoggedInHandle(doc);
+            console.log('[LeetForces] Extracted handle:', handle);
+
+            // Create a simple editor wrapper - for now, we'll use the CF textarea directly
+            // The floating panel doesn't have its own editor in this simplified version
+            const editor = {
+                getValue: () => {
+                    const textarea = doc.querySelector('textarea[name="source"]');
+                    return textarea ? textarea.value : '';
+                }
+            };
+
+            injectControlPanel({
                 doc,
+                editor,
                 context,
                 formDetails,
+                handle,
                 submitSolution: submitHandler,
                 pollVerdict: (opts) => pollVerdictForSubmission({
                     ...opts,
