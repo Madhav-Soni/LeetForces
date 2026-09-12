@@ -1,23 +1,25 @@
 /**
- * LeetForces Control Panel
- * Injects a floating Run/Submit control bar into Codeforces problem pages.
- * All visual styling comes from the token + component classes defined in
- * theme.css (loaded once via manifest content_scripts.css) — no hardcoded
- * hex colors or magic-number spacing live here.
+ * LeetForces Workspace
+ * LeetCode-style split view on Codeforces problem pages:
+ * left = problem statement, right = language + editor + Run/Submit + live verdicts.
+ * Submits through the logged-in Codeforces session — no file download/upload.
  */
 
-import { getEditorValue } from './editorManager.js';
 import { runSampleTests } from './testRunner.js';
-import { populateLanguageSelector } from './languageMap.js';
+import { populateLanguageSelector, getLanguageFamily } from './languageMap.js';
+import {
+    getPreferredLanguage,
+    savePreferredLanguage,
+    getSavedCode,
+    saveCode
+} from './storage.js';
+import { getBoilerplate } from './boilerplates.js';
+import { computeCursorOffset, offsetToLineCol } from './editorManager.js';
+import { getVerdictTheme } from './verdictUI.js';
 
-const PANEL_ID = 'leetforces-control-panel';
-
-// Single-color mark, sized to match --lf-header-mark (18px box). No animation.
-const BRAND_MARK_SVG = `
-<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M5 4L11 12L5 20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M13 20H19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-</svg>`;
+const WORKSPACE_ID = 'leetforces-workspace';
+const PANEL_ID = 'leetforces-control-panel'; // kept for tests / legacy queries
+const DEFAULT_LANG = 'GNU G++20 (64 bit)';
 
 function escapeHtml(str = '') {
     return String(str)
@@ -26,213 +28,422 @@ function escapeHtml(str = '') {
         .replace(/>/g, '&gt;');
 }
 
-const STATUS_TO_BADGE_VARIANT = {
-    PASSED: 'success',
-    ACCEPTED: 'success',
-    WRONG_ANSWER: 'error',
-    RUNTIME_ERROR: 'error',
-    ERROR: 'error',
-    COMPILATION_ERROR: 'warning',
-    TIME_LIMIT_EXCEEDED: 'warning',
-    MEMORY_LIMIT_EXCEEDED: 'warning',
-    SKIPPED: 'neutral',
-    TESTING: 'info'
-};
-
-function badgeVariant(status) {
-    return STATUS_TO_BADGE_VARIANT[status] || 'neutral';
+function el(doc, tag, attrs = {}, text) {
+    const node = doc.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+        if (key === 'style') {
+            const css = typeof value === 'string'
+                ? value
+                : Object.entries(value).map(([k, v]) => `${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}:${v}`).join(';');
+            if (node.style) node.style.cssText = css;
+            else node.style = { cssText: css };
+        } else if (key === 'id') {
+            node.id = value;
+            if (node.attributes) node.attributes.id = value;
+            if (typeof node.setAttribute === 'function') node.setAttribute('id', value);
+        } else if (typeof node.setAttribute === 'function') {
+            node.setAttribute(key, value);
+        } else {
+            node[key] = value;
+            if (node.attributes) node.attributes[key] = value;
+        }
+    }
+    if (text !== undefined) node.textContent = text;
+    return node;
 }
 
-function alertVariantClass(variant) {
-    if (variant === 'success' || variant === 'warning' || variant === 'info') return variant;
-    if (variant === 'neutral') return 'neutral';
-    return 'error';
+function placeCursorInTextarea(textarea, line, col) {
+    try {
+        if (!textarea || typeof textarea.setSelectionRange !== 'function') return;
+        const offset = computeCursorOffset(String(textarea.value || ''), line, col);
+        if (typeof textarea.focus === 'function') textarea.focus();
+        textarea.setSelectionRange(offset, offset);
+    } catch (_) { /* ignore */ }
 }
 
-function buildTestResultHtml(r) {
-    const variant = badgeVariant(r.status);
-    const label = r.passed ? 'Pass' : r.status.replace(/_/g, ' ').toLowerCase();
-    const showDiff = !r.passed && r.status !== 'SKIPPED';
-    const colors = {
-        success: '#4ade80',
-        error: '#f87171',
-        warning: '#fbbf24',
-        neutral: '#a1a1aa',
-        info: '#60a5fa'
-    };
-    const bgColors = {
-        success: 'rgba(74, 222, 128, 0.10)',
-        error: 'rgba(248, 113, 113, 0.10)',
-        warning: 'rgba(251, 191, 36, 0.10)',
-        neutral: 'rgba(161, 161, 170, 0.10)',
-        info: 'rgba(96, 165, 250, 0.10)'
-    };
-    const color = colors[variant] || colors.neutral;
-    const bgColor = bgColors[variant] || bgColors.neutral;
-
-    return `
-        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-top:8px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
-                <span>Test ${r.index}</span>
-                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${escapeHtml(label)}</span>
-            </div>
-            ${showDiff ? `
-                <div style="white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size:12px; color:#a1a1aa; background:#131316; border:1px solid #27272a; border-radius:6px; padding:8px; margin-top:4px;">Expected\n${escapeHtml(r.expected)}</div>
-                <div style="white-space:pre-wrap; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size:12px; color:#a1a1aa; background:#131316; border:1px solid #27272a; border-radius:6px; padding:8px; margin-top:4px;">Got\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
-            ` : ''}
-        </div>
-    `;
+function safeSaveCode(problemKey, languageFamily, code) {
+    if (!problemKey || typeof code !== 'string' || !code.trim()) return;
+    try {
+        const p = saveCode(problemKey, languageFamily, code);
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (_) { /* ignore */ }
 }
 
 function buildTestResultsHtml(results) {
     if (!results || results.length === 0) return '';
-    return results.map(buildTestResultHtml).join('');
+    return results.map(r => {
+        const color = r.passed ? '#22c55e' : (r.status === 'SKIPPED' ? '#64748b' : '#ef4444');
+        const label = r.passed ? 'PASS' : String(r.status || '').replace(/_/g, ' ');
+        const showDiff = !r.passed && r.status !== 'SKIPPED';
+        return `
+            <div style="border-left:3px solid ${color}; padding:8px 10px; margin-top:8px; font-size:12px; font-family:ui-monospace,Menlo,monospace;">
+                <div style="color:${color}; font-weight:700;">Case ${r.index}: ${label}</div>
+                ${showDiff ? `
+                    <div style="opacity:0.9; white-space:pre-wrap; margin-top:4px; color:#cbd5e1;">Expected:\n${escapeHtml(r.expected)}</div>
+                    <div style="opacity:0.9; white-space:pre-wrap; margin-top:4px; color:#cbd5e1;">Output:\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
 }
 
-function buildRunSummaryHtml(overallPassed, count) {
-    const color = overallPassed ? '#4ade80' : '#f87171';
-    const bgColor = overallPassed ? 'rgba(74, 222, 128, 0.10)' : 'rgba(248, 113, 113, 0.10)';
-    return `
-        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-bottom:8px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
-                <span>${overallPassed ? 'All sample tests passed' : 'Some sample tests failed'}</span>
-                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${count} test${count === 1 ? '' : 's'}</span>
-            </div>
+function renderLocalVerdict(container, verdictData = {}) {
+    if (!container) return;
+    const {
+        statusKey = 'TESTING',
+        formattedText = 'Testing...',
+        submissionId = null,
+        timeMs = 0,
+        memoryBytes = 0
+    } = verdictData;
+    const theme = getVerdictTheme(statusKey);
+    const memoryMb = memoryBytes ? (memoryBytes / (1024 * 1024)).toFixed(1) : null;
+
+    container.style.cssText = `
+        margin-top: 8px; padding: 12px 14px; border-radius: 10px;
+        background: ${theme.bgColor}; border: 1px solid ${theme.borderColor}; color: ${theme.color};
+        font-family: system-ui, -apple-system, sans-serif;
+    `;
+    container.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div style="font-weight:750; font-size:15px;">${theme.icon} ${escapeHtml(formattedText)}</div>
+            <span style="font-size:11px; font-weight:700; letter-spacing:0.04em; padding:3px 8px; border-radius:999px; background:${theme.borderColor};">${escapeHtml(theme.badgeLabel)}</span>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:12px; margin-top:8px; font-size:12px; opacity:0.95;">
+            ${submissionId ? `<span>Submission <strong>${escapeHtml(String(submissionId))}</strong></span>` : ''}
+            ${timeMs > 0 ? `<span>Time <strong>${timeMs} ms</strong></span>` : ''}
+            ${memoryMb ? `<span>Memory <strong>${memoryMb} MB</strong></span>` : ''}
+            ${theme.isPending ? `<span style="font-style:italic;">Polling Codeforces…</span>` : ''}
         </div>
     `;
 }
 
-function buildMessageHtml(text, variant = 'neutral') {
-    const colors = {
-        success: '#4ade80',
-        error: '#f87171',
-        warning: '#fbbf24',
-        neutral: '#a1a1aa',
-        info: '#60a5fa'
-    };
-    const bgColors = {
-        success: 'rgba(74, 222, 128, 0.10)',
-        error: 'rgba(248, 113, 113, 0.10)',
-        warning: 'rgba(251, 191, 36, 0.10)',
-        neutral: 'rgba(161, 161, 170, 0.10)',
-        info: 'rgba(96, 165, 250, 0.10)'
-    };
-    const color = colors[variant] || colors.neutral;
-    const bgColor = bgColors[variant] || bgColors.neutral;
-    return `<div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px;"><div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;"><span>${escapeHtml(text)}</span></div></div>`;
-}
-
-function getSelectedLanguageTitle(formDetails, selectEl) {
-    if (selectEl && selectEl.value) {
-        const opt = (formDetails.availableLanguages || []).find(l => String(l.value) === String(selectEl.value));
-        if (opt) return opt.title;
-    }
-    const selected = (formDetails.availableLanguages || []).find(l => l.isSelected);
-    return selected ? selected.title : 'GNU G++20 (64 bit)';
-}
-
-
 /**
- * Injects the Run/Submit control panel into the page. Safe to call once;
- * subsequent calls return the existing panel instead of duplicating it.
- * @param {object} deps
- * @returns {HTMLElement}
+ * Injects LeetCode-style workspace. Safe to call multiple times (rebuilds).
+ * @returns {Promise<HTMLElement>}
  */
-export function injectControlPanel({
+export async function injectControlPanel({
     doc = document,
-    editor,
-    context,
-    formDetails,
-    handle,
+    context = {},
+    formDetails = {},
     submitSolution,
     pollVerdict,
     renderVerdict
 }) {
-    const existing = doc.getElementById(PANEL_ID);
-    if (existing) return existing;
+    const prev = doc.getElementById(WORKSPACE_ID) || doc.getElementById(PANEL_ID);
+    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
 
-    const panel = doc.createElement('div');
-    panel.id = PANEL_ID;
-    // Fallback inline styles in case CSS doesn't load
-    panel.style.cssText = `
-        position: fixed;
-        bottom: 24px;
-        right: 24px;
-        z-index: 999999;
-        width: 360px;
-        max-height: 70vh;
-        overflow-y: auto;
-        padding: 16px;
-        background: #0b0b0d;
-        border: 1px solid #27272a;
-        border-radius: 12px;
-        color: #f4f4f5;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-    `;
+    // Hide native CF chrome while workspace is active
+    const body = doc.body;
+    if (!body) throw new Error('document.body is not available');
 
-    panel.innerHTML = `
-        <div class="lf-header" style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid #27272a;">
-            <div class="lf-header-title" style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:#f4f4f5;">
-                <span class="lf-header-mark" style="display:inline-flex; width:18px; height:18px; color:#6366f1; flex-shrink:0;">${BRAND_MARK_SVG}</span>
-                <span>LeetForces</span>
-            </div>
-            <span class="lf-problem-key" style="font-size:12px; color:#a1a1aa; font-family:ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;">${escapeHtml(context.problemKey || '')}</span>
-        </div>
-        <div class="lf-toolbar" style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
-            <select id="leetforces-lang-select" class="lf-select" aria-label="Language" style="appearance:none; -webkit-appearance:none; flex:1; min-width:0; height:34px; padding:0 24px 0 12px; background:#131316; border:1px solid #27272a; border-radius:8px; color:#f4f4f5; font-size:13px; font-family:inherit; cursor:pointer;"></select>
-        </div>
-        <div class="lf-toolbar" style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
-            <button id="leetforces-run-btn" class="lf-btn lf-btn-secondary" type="button" style="display:inline-flex; align-items:center; justify-content:center; height:34px; padding:0 16px; border:1px solid #27272a; border-radius:8px; background:#131316; color:#f4f4f5; font-size:13px; font-weight:500; font-family:inherit; cursor:pointer; flex:1;">Run</button>
-            <button id="leetforces-submit-btn" class="lf-btn lf-btn-primary" type="button" style="display:inline-flex; align-items:center; justify-content:center; height:34px; padding:0 16px; border:1px solid #6366f1; border-radius:8px; background:#6366f1; color:#f5f5ff; font-size:13px; font-weight:500; font-family:inherit; cursor:pointer; flex:1;">Submit</button>
-        </div>
-        <div id="leetforces-run-results" style="margin-top:8px;"></div>
-        <div id="leetforces-verdict-panel" style="margin-top:8px;"></div>
-    `;
-    doc.body.appendChild(panel);
+    if (!doc.getElementById('leetforces-hide-native')) {
+        const style = el(doc, 'style', { id: 'leetforces-hide-native' });
+        style.textContent = `
+            body.leetforces-active > *:not(#leetforces-workspace):not(script):not(style) { display: none !important; }
+            #leetforces-workspace, #leetforces-workspace * { box-sizing: border-box; }
+            #leetforces-workspace pre, #leetforces-workspace .problem-statement {
+                white-space: pre-wrap; word-break: break-word;
+            }
+            #leetforces-code-editor:focus { outline: 1px solid #38bdf8; outline-offset: -1px; }
+            #leetforces-run-btn:hover, #leetforces-submit-btn:hover { filter: brightness(1.08); }
+            #leetforces-run-btn:disabled, #leetforces-submit-btn:disabled { opacity: 0.65; cursor: wait; }
+        `;
+        (doc.head || body).appendChild(style);
+    }
+    if (body.classList && body.classList.add) body.classList.add('leetforces-active');
+    else body.className = `${body.className || ''} leetforces-active`.trim();
 
-    const langSelect = panel.querySelector('#leetforces-lang-select');
-    const runBtn = panel.querySelector('#leetforces-run-btn');
-    const submitBtn = panel.querySelector('#leetforces-submit-btn');
-    const runResultsEl = panel.querySelector('#leetforces-run-results');
-    const verdictEl = panel.querySelector('#leetforces-verdict-panel');
-
-    populateLanguageSelector(langSelect, formDetails.availableLanguages || [], '');
-
-    // Keep formDetails' isSelected flags in sync so submission uses the user's choice.
-    langSelect.addEventListener('change', () => {
-        (formDetails.availableLanguages || []).forEach(l => {
-            l.isSelected = String(l.value) === String(langSelect.value);
-        });
+    const workspace = el(doc, 'div', {
+        id: WORKSPACE_ID,
+        style: `
+            position: fixed; inset: 0; z-index: 2147483000;
+            display: flex; flex-direction: column;
+            background: #0b1120; color: #e2e8f0;
+            font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+        `
     });
+
+    // Also expose legacy panel id on inner shell for tests
+    const shell = el(doc, 'div', {
+        id: PANEL_ID,
+        style: 'display:flex; flex-direction:column; height:100%; min-height:0;'
+    });
+
+    // Top bar
+    const top = el(doc, 'div', {
+        style: `
+            flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+            gap:12px; padding:10px 14px; border-bottom:1px solid #1e293b; background:#0f172a;
+        `
+    });
+    const topLeft = el(doc, 'div', { style: 'display:flex; align-items:baseline; gap:10px; min-width:0;' });
+    topLeft.appendChild(el(doc, 'span', {
+        style: 'font-weight:800; font-size:15px; color:#f8fafc; letter-spacing:0.02em;'
+    }, 'LeetForces'));
+    topLeft.appendChild(el(doc, 'span', {
+        style: 'font-size:13px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'
+    }, context.problemName
+        ? `${context.problemIndex || ''}. ${context.problemName}`
+        : (context.problemKey || 'Problem')));
+    const topRight = el(doc, 'div', { style: 'display:flex; align-items:center; gap:8px;' });
+    const classicBtn = el(doc, 'button', {
+        id: 'leetforces-classic-btn',
+        type: 'button',
+        style: 'background:#1e293b; border:1px solid #334155; color:#cbd5e1; border-radius:8px; padding:7px 10px; font-size:12px; cursor:pointer;'
+    }, 'Classic CF');
+    topRight.appendChild(classicBtn);
+    top.appendChild(topLeft);
+    top.appendChild(topRight);
+
+    // Main split
+    const main = el(doc, 'div', {
+        style: 'flex:1 1 auto; display:flex; min-height:0;'
+    });
+
+    // Left: problem
+    const left = el(doc, 'div', {
+        id: 'leetforces-problem-pane',
+        style: `
+            flex: 1 1 48%; min-width: 280px; max-width: 55%;
+            overflow: auto; padding: 18px 20px 28px;
+            background: #111827; border-right: 1px solid #1e293b;
+            color: #e5e7eb; font-size: 14px; line-height: 1.55;
+        `
+    });
+    left.appendChild(el(doc, 'div', {
+        style: 'font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:12px;'
+    }, 'Problem'));
+
+    const statement = doc.querySelector && doc.querySelector('.problem-statement');
+    if (statement && typeof statement.cloneNode === 'function') {
+        const clone = statement.cloneNode(true);
+        // neutralize CF absolute positioning quirks
+        if (clone.style) clone.style.cssText = 'position:static; width:auto; max-width:100%;';
+        left.appendChild(clone);
+    } else {
+        left.appendChild(el(doc, 'div', { style: 'color:#94a3b8;' },
+            'Problem statement could not be cloned. Use Classic CF to read it on the original page.'));
+    }
+
+    // Right: IDE
+    const right = el(doc, 'div', {
+        style: 'flex:1 1 52%; min-width:320px; display:flex; flex-direction:column; min-height:0; background:#0b1120;'
+    });
+
+    const toolbar = el(doc, 'div', {
+        style: `
+            flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:8px;
+            padding:10px 12px; border-bottom:1px solid #1e293b; background:#0f172a;
+        `
+    });
+
+    const langSelect = el(doc, 'select', {
+        id: 'leetforces-lang-select',
+        style: `
+            flex:1 1 220px; min-width:180px; background:#111827; border:1px solid #334155;
+            color:#e2e8f0; border-radius:8px; padding:8px 10px; font-size:13px;
+        `
+    });
+
+    const runBtn = el(doc, 'button', {
+        id: 'leetforces-run-btn',
+        type: 'button',
+        style: `
+            flex:0 0 auto; padding:8px 14px; border:none; border-radius:8px;
+            background:#334155; color:#f8fafc; font-weight:700; font-size:13px; cursor:pointer;
+        `
+    }, 'Run');
+
+    const submitBtn = el(doc, 'button', {
+        id: 'leetforces-submit-btn',
+        type: 'button',
+        style: `
+            flex:0 0 auto; padding:8px 16px; border:none; border-radius:8px;
+            background:#22c55e; color:#052e16; font-weight:800; font-size:13px; cursor:pointer;
+        `
+    }, 'Submit');
+
+    toolbar.appendChild(langSelect);
+    toolbar.appendChild(runBtn);
+    toolbar.appendChild(submitBtn);
+
+    const codeEditor = el(doc, 'textarea', {
+        id: 'leetforces-code-editor',
+        spellcheck: 'false',
+        style: `
+            flex:1 1 auto; min-height:220px; width:100%; resize:none; border:none;
+            padding:14px 16px; background:#020617; color:#e2e8f0;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size:13px; line-height:1.5; tab-size:4; white-space:pre; overflow:auto;
+        `
+    });
+
+    const consolePane = el(doc, 'div', {
+        id: 'leetforces-console',
+        style: `
+            flex:0 0 34%; min-height:140px; max-height:42%; overflow:auto;
+            border-top:1px solid #1e293b; background:#0f172a; padding:12px 14px;
+        `
+    });
+    consolePane.appendChild(el(doc, 'div', {
+        style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:6px;'
+    }, 'Console'));
+    const runResultsEl = el(doc, 'div', { id: 'leetforces-run-results' });
+    const verdictEl = el(doc, 'div', { id: 'leetforces-verdict-panel' });
+    consolePane.appendChild(runResultsEl);
+    consolePane.appendChild(verdictEl);
+
+    right.appendChild(toolbar);
+    right.appendChild(codeEditor);
+    right.appendChild(consolePane);
+
+    main.appendChild(left);
+    main.appendChild(right);
+
+    shell.appendChild(top);
+    shell.appendChild(main);
+    workspace.appendChild(shell);
+    body.appendChild(workspace);
+
+    // Language default: saved → G++20 (ignore CF page selection)
+    let preferredLang = DEFAULT_LANG;
+    try {
+        const savedLang = await getPreferredLanguage();
+        if (savedLang) preferredLang = savedLang;
+    } catch (_) { /* ignore */ }
+
+    populateLanguageSelector(
+        langSelect,
+        (formDetails && formDetails.availableLanguages) || [],
+        preferredLang
+    );
+
+    const problemKey = context.problemKey || '';
+
+    // Loads saved code for the currently selected language, or falls back
+    // to that language's boilerplate. Shared by initial load and every
+    // subsequent language switch so there's one source of truth.
+    const loadCodeForCurrentLanguage = async () => {
+        const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
+        const langTitle = (opt && opt.text) || DEFAULT_LANG;
+        const languageFamily = getLanguageFamily(langTitle) || 'C++';
+
+        let codeToApply = '';
+        try {
+            if (problemKey) {
+                const saved = await getSavedCode(problemKey, languageFamily);
+                if (typeof saved === 'string' && saved.trim()) codeToApply = saved;
+            }
+        } catch (_) { /* ignore */ }
+
+        let usedBoilerplate = false;
+        if (!codeToApply) {
+            const boilerplate = getBoilerplate(languageFamily);
+            codeToApply = boilerplate ? boilerplate.code : '';
+            usedBoilerplate = true;
+            if (problemKey) safeSaveCode(problemKey, languageFamily, codeToApply);
+        }
+
+        codeEditor.value = codeToApply;
+
+        if (usedBoilerplate) {
+            const boilerplate = getBoilerplate(languageFamily);
+            if (boilerplate) {
+                const { line, col } = offsetToLineCol(boilerplate.code, boilerplate.cursorOffset);
+                setTimeout(() => placeCursorInTextarea(codeEditor, line, col), 40);
+            }
+        }
+
+        return languageFamily;
+    };
+
+    let currentLanguageFamily = await loadCodeForCurrentLanguage();
+
+    langSelect.addEventListener('change', async () => {
+        try {
+            const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
+            if (opt && opt.text) savePreferredLanguage(opt.text);
+        } catch (_) { /* ignore */ }
+        currentLanguageFamily = await loadCodeForCurrentLanguage();
+    });
+
+    let saveTimer = null;
+    const persistCode = () => safeSaveCode(problemKey, currentLanguageFamily, String(codeEditor.value || ''));
+    codeEditor.addEventListener('input', () => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(persistCode, 300);
+    });
+    codeEditor.addEventListener('keydown', (e) => {
+        if (!e || e.key !== 'Tab') return;
+        e.preventDefault();
+        try {
+            const start = codeEditor.selectionStart != null ? codeEditor.selectionStart : String(codeEditor.value || '').length;
+            const end = codeEditor.selectionEnd != null ? codeEditor.selectionEnd : start;
+            const value = String(codeEditor.value || '');
+            codeEditor.value = `${value.slice(0, start)}    ${value.slice(end)}`;
+            codeEditor.selectionStart = codeEditor.selectionEnd = start + 4;
+            persistCode();
+        } catch (_) { /* ignore */ }
+    });
+
+    classicBtn.addEventListener('click', () => {
+        try {
+            if (body.classList && body.classList.remove) body.classList.remove('leetforces-active');
+            if (workspace.parentNode) workspace.parentNode.removeChild(workspace);
+        } catch (_) { /* ignore */ }
+    });
+
+    const getSelectedLangTitle = () => {
+        try {
+            const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
+            return (opt && opt.text) || DEFAULT_LANG;
+        } catch (_) {
+            return DEFAULT_LANG;
+        }
+    };
+
+    const getSourceCode = () => {
+        let code = '';
+        try { code = String(codeEditor.value != null ? codeEditor.value : ''); } catch (_) { code = ''; }
+        if (!code.trim()) {
+            code = DEFAULT_CPP_TEMPLATE;
+            try { codeEditor.value = code; } catch (_) { /* ignore */ }
+        }
+        return code.replace(/\s+$/, '');
+    };
+
+    const showVerdict = (data) => {
+        if (typeof renderVerdict === 'function') {
+            try { renderVerdict(verdictEl, data); return; } catch (_) { /* fall through */ }
+        }
+        renderLocalVerdict(verdictEl, data);
+    };
 
     runBtn.addEventListener('click', async () => {
         runBtn.disabled = true;
-        runBtn.textContent = 'Running...';
+        runBtn.textContent = 'Running…';
         runResultsEl.innerHTML = '';
-
+        verdictEl.innerHTML = '';
         try {
-            let sourceCode = getEditorValue(editor);
-            // Fallback: if editor instance is missing, try direct DOM query
-            if (!sourceCode) {
-                const textarea = doc.querySelector('textarea[name="source"]') || doc.querySelector('textarea');
-                if (textarea) sourceCode = textarea.value;
-            }
-            const languageTitle = getSelectedLanguageTitle(formDetails, langSelect);
-
+            const sourceCode = getSourceCode();
             const { overallPassed, results, error } = await runSampleTests({
-                languageTitle,
+                languageTitle: getSelectedLangTitle(),
                 sourceCode,
-                sampleTests: context.sampleTests
+                sampleTests: (context && context.sampleTests) || []
             });
-
             if (error) {
-                runResultsEl.innerHTML = buildMessageHtml(error, 'error');
+                runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:13px;">${escapeHtml(error)}</div>`;
             } else {
-                runResultsEl.innerHTML = buildRunSummaryHtml(overallPassed, results.length) + buildTestResultsHtml(results);
+                runResultsEl.innerHTML = `
+                    <div style="color:${overallPassed ? '#22c55e' : '#ef4444'}; font-weight:700; font-size:13px;">
+                        ${overallPassed ? `Accepted on all ${results.length} sample(s)` : 'Sample tests failed'}
+                    </div>
+                    ${buildTestResultsHtml(results)}
+                `;
             }
         } catch (err) {
-            runResultsEl.innerHTML = buildMessageHtml(err.message || 'Run failed', 'error');
+            runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:13px;">${escapeHtml((err && err.message) || 'Run failed')}</div>`;
         } finally {
             runBtn.disabled = false;
             runBtn.textContent = 'Run';
@@ -241,47 +452,49 @@ export function injectControlPanel({
 
     submitBtn.addEventListener('click', async () => {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Submitting...';
+        submitBtn.textContent = 'Submitting…';
+        runResultsEl.innerHTML = '';
         verdictEl.innerHTML = '';
-
         try {
-            let sourceCode = getEditorValue(editor);
-            // Fallback: if editor instance is missing, try direct DOM query
-            if (!sourceCode) {
-                const textarea = doc.querySelector('textarea[name="source"]') || doc.querySelector('textarea');
-                if (textarea) sourceCode = textarea.value;
+            const sourceCode = getSourceCode();
+            persistCode();
+
+            if (typeof submitSolution !== 'function') {
+                throw new Error('Submit handler missing. Reload the extension and refresh this page.');
             }
-            const languageTitle = getSelectedLanguageTitle(formDetails, langSelect);
 
-            const result = await submitSolution(sourceCode, languageTitle);
+            showVerdict({ statusKey: 'TESTING', formattedText: 'Submitting to Codeforces…' });
 
-            if (!result.success) {
-                verdictEl.innerHTML = buildMessageHtml(`Submission failed: ${result.error || 'unknown error'}`, 'error');
+            const result = await submitSolution(sourceCode, getSelectedLangTitle());
+            if (!result || !result.success) {
+                showVerdict({
+                    statusKey: 'WRONG_ANSWER',
+                    formattedText: `Submission failed: ${(result && result.error) || 'unknown error'}`
+                });
+                // Override badge-ish styling for submit errors
+                verdictEl.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:4px 0;">Submission failed: ${escapeHtml((result && result.error) || 'unknown error')}</div>`;
                 return;
             }
 
-            if (!handle) {
-                verdictEl.innerHTML = buildMessageHtml(
-                    `Submitted (ID ${result.submissionId || '?'}), but couldn't detect your handle to poll the verdict automatically.`,
-                    'warning'
-                );
-                return;
-            }
-
-            renderVerdict(verdictEl, { statusKey: 'TESTING', formattedText: 'Submitted, waiting for verdict...' });
-
-            await pollVerdict({
-                handle,
-                submissionId: result.submissionId,
-                onUpdate: (verdictData) => renderVerdict(verdictEl, verdictData)
+            showVerdict({
+                statusKey: 'TESTING',
+                formattedText: 'In queue… waiting for verdict',
+                submissionId: result.submissionId
             });
+
+            if (typeof pollVerdict === 'function') {
+                await pollVerdict({
+                    submissionId: result.submissionId,
+                    onUpdate: (verdictData) => showVerdict(verdictData)
+                });
+            }
         } catch (err) {
-            verdictEl.innerHTML = buildMessageHtml(err.message || 'Submit failed', 'error');
+            verdictEl.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:4px 0;">${escapeHtml((err && err.message) || 'Submit failed')}</div>`;
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = 'Submit';
         }
     });
 
-    return panel;
+    return shell;
 }

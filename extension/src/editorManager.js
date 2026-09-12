@@ -6,8 +6,25 @@
  * When direct detection fails, we talk to src/pageBridge.js (MAIN world) via CustomEvents.
  */
 
-import { DEFAULT_CPP_TEMPLATE, DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN } from './constants.js';
+import { DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN } from './constants.js';
 import { getSavedCode, saveCode, getLastProblemKey, setLastProblemKey } from './storage.js';
+import { getBoilerplate } from './boilerplates.js';
+
+/**
+ * Converts a character offset back into 1-indexed line/column, the inverse
+ * of computeCursorOffset. Used to place the cursor at a boilerplate's
+ * $CURSOR$ marker position.
+ * @param {string} text
+ * @param {number} offset
+ * @returns {{ line: number, col: number }}
+ */
+export function offsetToLineCol(text, offset) {
+    const before = text.slice(0, offset);
+    const lines = before.split('\n');
+    const line = lines.length;
+    const col = lines[lines.length - 1].length + 1;
+    return { line, col };
+}
 
 /**
  * Computes character offset in raw string for target line and column (1-indexed).
@@ -104,11 +121,7 @@ function detectEditorDirect(doc = document) {
         'form[action*="submit"] textarea[name="source"]',
         'textarea#sourceCodeTextarea',
         'textarea[name="source"]',
-        'textarea.source-code',
-        'textarea.program-source-text',
-        'div.source textarea',
-        'div.input textarea',
-        'textarea'
+        'textarea.source-code'
     ];
 
     for (const selector of textareaSelectors) {
@@ -241,12 +254,13 @@ export function setEditorCursor(editor, line = DEFAULT_CURSOR_LINE, col = DEFAUL
 }
 
 /**
- * Initializes problem code for the detected editor.
+ * Initializes problem code for the detected editor, for a given language.
  * @param {string} problemKey
+ * @param {string} languageFamily - e.g. "C++", "Python3" (from getLanguageFamily)
  * @param {{ type: string, instance: any, element: Element }} editor
  * @returns {Promise<{ isNewProblem: boolean, codeUsed: string }>}
  */
-export async function initializeProblemEditor(problemKey, editor) {
+export async function initializeProblemEditor(problemKey, languageFamily, editor) {
     if (!problemKey || !editor || !editor.instance) {
         return { isNewProblem: false, codeUsed: '' };
     }
@@ -254,37 +268,75 @@ export async function initializeProblemEditor(problemKey, editor) {
     const lastProblemKey = await getLastProblemKey();
     const isNewProblem = lastProblemKey !== problemKey;
 
-    let savedCode = await getSavedCode(problemKey);
-    let codeToApply = DEFAULT_CPP_TEMPLATE;
-
-    if (savedCode && savedCode.trim().length > 0) {
-        codeToApply = savedCode;
-    } else {
-        codeToApply = DEFAULT_CPP_TEMPLATE;
-        await saveCode(problemKey, codeToApply);
-    }
-
     await setLastProblemKey(problemKey);
-    setEditorValue(editor, codeToApply);
+    await loadCodeForLanguage(problemKey, languageFamily, editor);
 
-    if (codeToApply === DEFAULT_CPP_TEMPLATE || !savedCode) {
-        setTimeout(() => {
-            setEditorCursor(editor, DEFAULT_CURSOR_LINE, DEFAULT_CURSOR_COLUMN);
-        }, 50);
-    }
-
-    attachAutoSaveListener(problemKey, editor);
-
-    return { isNewProblem, codeUsed: codeToApply };
+    return { isNewProblem, codeUsed: getEditorValue(editor) };
 }
 
 /**
- * Attaches event listener to auto-save code changes for current problemKey.
+ * Loads saved code for a problem+language pair, or falls back to that
+ * language's boilerplate if nothing was saved yet. Called both on first
+ * load and whenever the user switches languages in the dropdown.
  * @param {string} problemKey
+ * @param {string} languageFamily
  * @param {{ type: string, instance: any, element: Element }} editor
  */
-export function attachAutoSaveListener(problemKey, editor) {
+export async function loadCodeForLanguage(problemKey, languageFamily, editor) {
     if (!problemKey || !editor || !editor.instance) return;
+
+    const savedCode = await getSavedCode(problemKey, languageFamily);
+
+    if (savedCode && savedCode.trim().length > 0) {
+        setEditorValue(editor, savedCode);
+        attachAutoSaveListener(problemKey, languageFamily, editor);
+        return;
+    }
+
+    const boilerplate = getBoilerplate(languageFamily);
+    const codeToApply = boilerplate ? boilerplate.code : '';
+
+    setEditorValue(editor, codeToApply);
+    await saveCode(problemKey, languageFamily, codeToApply);
+
+    if (boilerplate) {
+        setTimeout(() => {
+            const { line, col } = offsetToLineCol(codeToApply, boilerplate.cursorOffset);
+            setEditorCursor(editor, line, col);
+        }, 50);
+    }
+
+    attachAutoSaveListener(problemKey, languageFamily, editor);
+}
+
+/**
+ * Called when the user picks a different language in the dropdown.
+ * Swaps the autosave listener to the new problem+language key and loads
+ * whatever code belongs to that combination (saved code or boilerplate).
+ * @param {string} problemKey
+ * @param {string} languageFamily
+ * @param {{ type: string, instance: any, element: Element }} editor
+ */
+export async function switchLanguage(problemKey, languageFamily, editor) {
+    await loadCodeForLanguage(problemKey, languageFamily, editor);
+}
+
+/**
+ * Attaches event listener to auto-save code changes for the current
+ * problemKey + languageFamily pair. Detaches any previous autosave
+ * listener first so switching languages doesn't leave stale listeners
+ * saving into the wrong slot.
+ * @param {string} problemKey
+ * @param {string} languageFamily
+ * @param {{ type: string, instance: any, element: Element }} editor
+ */
+export function attachAutoSaveListener(problemKey, languageFamily, editor) {
+    if (!problemKey || !editor || !editor.instance) return;
+
+    if (editor.__lfDetachAutoSave) {
+        editor.__lfDetachAutoSave();
+        editor.__lfDetachAutoSave = null;
+    }
 
     let debounceTimer = null;
     const triggerSave = () => {
@@ -292,7 +344,7 @@ export function attachAutoSaveListener(problemKey, editor) {
         debounceTimer = setTimeout(() => {
             const currentCode = getEditorValue(editor);
             if (currentCode) {
-                saveCode(problemKey, currentCode);
+                saveCode(problemKey, languageFamily, currentCode);
             }
         }, 400);
     };
@@ -301,19 +353,30 @@ export function attachAutoSaveListener(problemKey, editor) {
         case 'bridge':
             callPageBridge('bindChange');
             document.addEventListener('leetforces-bridge-change', triggerSave);
+            editor.__lfDetachAutoSave = () => {
+                document.removeEventListener('leetforces-bridge-change', triggerSave);
+            };
             break;
         case 'ace':
             editor.instance.on('change', triggerSave);
+            editor.__lfDetachAutoSave = () => editor.instance.off('change', triggerSave);
             break;
-        case 'monaco':
-            editor.instance.onDidChangeModelContent(triggerSave);
+        case 'monaco': {
+            const disposable = editor.instance.onDidChangeModelContent(triggerSave);
+            editor.__lfDetachAutoSave = () => disposable.dispose();
             break;
+        }
         case 'codemirror':
             editor.instance.on('change', triggerSave);
+            editor.__lfDetachAutoSave = () => editor.instance.off('change', triggerSave);
             break;
         case 'textarea':
             editor.instance.addEventListener('input', triggerSave);
             editor.instance.addEventListener('change', triggerSave);
+            editor.__lfDetachAutoSave = () => {
+                editor.instance.removeEventListener('input', triggerSave);
+                editor.instance.removeEventListener('change', triggerSave);
+            };
             break;
     }
 }

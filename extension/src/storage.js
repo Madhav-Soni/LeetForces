@@ -5,9 +5,20 @@
 
 import { STORAGE_KEYS } from './constants.js';
 
-export async function getSavedCode(problemKey) {
+/**
+ * Builds the combined storage key for a problem + language pair.
+ * Falls back to problemKey alone if languageFamily is omitted, so any
+ * existing single-key saves from before this change still resolve.
+ */
+function buildCodeStorageKey(problemKey, languageFamily) {
+    return languageFamily
+        ? `${STORAGE_KEYS.CODE_PREFIX}${problemKey}::${languageFamily}`
+        : `${STORAGE_KEYS.CODE_PREFIX}${problemKey}`;
+}
+
+export async function getSavedCode(problemKey, languageFamily) {
     if (!problemKey) return null;
-    const storageKey = STORAGE_KEYS.CODE_PREFIX + problemKey;
+    const storageKey = buildCodeStorageKey(problemKey, languageFamily);
 
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         return new Promise(resolve => {
@@ -27,10 +38,10 @@ export async function getSavedCode(problemKey) {
     return null;
 }
 
-export async function saveCode(problemKey, code) {
+export async function saveCode(problemKey, languageFamily, code) {
     if (!problemKey) return;
     if (typeof code !== 'string' || !code.trim()) return;
-    const storageKey = STORAGE_KEYS.CODE_PREFIX + problemKey;
+    const storageKey = buildCodeStorageKey(problemKey, languageFamily);
 
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         return new Promise(resolve => {

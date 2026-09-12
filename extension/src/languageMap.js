@@ -3,9 +3,8 @@
  * Maps human-readable names to Codeforces internal compiler IDs (programTypeId).
  */
 
-// Standard Codeforces Compiler Mapping (updated for current Codeforces naming)
+// Standard Codeforces Compiler Mapping
 export const KNOWN_COMPILER_MAP = {
-    'GNU G++20 13.2 (64 bit, winlibs)': '89',
     'GNU G++20 (64 bit)': '89',
     'GNU G++17 7.3.0': '54',
     'GNU G++23 64 bit': '91',
@@ -26,6 +25,59 @@ export const KNOWN_COMPILER_MAP = {
     'JavaScript V8 4.8.0': '34',
     'Node.js 20.10.0': '55'
 };
+
+// Ordered keyword checks used to classify a raw CF compiler title into a
+// boilerplate family. Order matters: more specific checks (C++, C#) must
+// come before broader ones (C) to avoid false matches.
+const FAMILY_KEYWORD_RULES = [
+    ['C++', ['g++', 'gnu c++', 'clang++', 'c++']],
+    ['C#', ['c#', 'mono']],
+    ['Java', ['java']],
+    ['Kotlin', ['kotlin']],
+    ['Scala', ['scala']],
+    ['Go', ['go ', 'golang']],
+    ['Rust', ['rust']],
+    ['Swift', ['swift']],
+    ['PyPy', ['pypy']],
+    ['Python3', ['python 3', 'python3']],
+    ['Python', ['python']],
+    ['TypeScript', ['typescript']],
+    ['JavaScript', ['javascript', 'node.js', 'node']],
+    ['Ruby', ['ruby']],
+    ['PHP', ['php']],
+    ['Dart', ['dart']],
+    ['Elixir', ['elixir']],
+    ['Erlang', ['erlang']],
+    ['Racket', ['racket']],
+    ['C', ['gnu c', ' c ', ' c11', ' c17']],
+];
+
+/**
+ * Maps a raw compiler id (e.g. "54") or title (e.g. "GNU G++17 7.3.0")
+ * to the boilerplate family key used in BOILERPLATE_MAP.
+ * @param {string} compilerIdOrTitle
+ * @returns {string|null} - e.g. "C++", "Python3", "Java" or null if unmatched
+ */
+export function getLanguageFamily(compilerIdOrTitle) {
+    if (!compilerIdOrTitle) return null;
+
+    let title = String(compilerIdOrTitle);
+
+    // If given a raw compiler id, resolve it to its known title first.
+    const byId = Object.entries(KNOWN_COMPILER_MAP).find(([, id]) => String(id) === title);
+    if (byId) title = byId[0];
+
+    const lower = title.toLowerCase();
+
+    // PyPy is its own runtime but should use the Python3 boilerplate.
+    for (const [family, keywords] of FAMILY_KEYWORD_RULES) {
+        if (keywords.some(k => lower.includes(k))) {
+            return family === 'PyPy' ? 'Python3' : family;
+        }
+    }
+
+    return null;
+}
 
 /**
  * Resolves the best matching programTypeId from available form languages based on user preference.
