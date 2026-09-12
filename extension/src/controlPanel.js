@@ -1,7 +1,7 @@
 /**
  * LeetForces Workspace
  * LeetCode-style split view on Codeforces problem pages:
- * left = problem statement, right = language + editor + Submit + live verdicts.
+ * left = problem statement, right = language + editor + Run/Submit + live verdicts.
  * Submits through the logged-in Codeforces session — no file download/upload.
  *
  * All visual styling (colors, spacing, buttons, alerts) comes from
@@ -21,6 +21,7 @@ import {
 import { getBoilerplate } from './boilerplates.js';
 import { computeCursorOffset, offsetToLineCol } from './editorManager.js';
 import { getVerdictTheme, renderVerdictPanel } from './verdictUI.js';
+import { getRatingColor } from './contextExtractor.js';
 
 const WORKSPACE_ID = 'leetforces-workspace';
 const PANEL_ID = 'leetforces-control-panel'; // kept for tests / legacy queries
@@ -46,6 +47,7 @@ function el(doc, tag, attrs = {}, text) {
             node.setAttribute(key, value);
             if (key === 'id') node.id = value;
         } else {
+            // Fallback for non-DOM mock nodes (e.g. in tests) that have no setAttribute.
             node[key] = value;
         }
     }
@@ -90,15 +92,20 @@ export async function injectControlPanel({
     const prev = doc.getElementById(WORKSPACE_ID) || doc.getElementById(PANEL_ID);
     if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
 
+    // Hide native CF chrome while workspace is active
     const body = doc.body;
     if (!body) throw new Error('document.body is not available');
 
+    // Structural rules only — no color/token definitions here.
+    // All colors, spacing, and component styling come from theme.css.
     if (!doc.getElementById('leetforces-hide-native')) {
         const style = el(doc, 'style', { id: 'leetforces-hide-native' });
         style.textContent = `
             body.leetforces-active > *:not(#leetforces-workspace):not(script):not(style) { display: none !important; }
             #leetforces-workspace, #leetforces-workspace * { box-sizing: border-box; }
-            #leetforces-workspace pre, #leetforces-workspace .problem-statement { white-space: pre-wrap; word-break: break-word; }
+            #leetforces-workspace pre, #leetforces-workspace .problem-statement {
+                white-space: pre-wrap; word-break: break-word;
+            }
             #leetforces-code-editor:focus { outline: 1px solid var(--lf-accent); outline-offset: -1px; }
         `;
         (doc.head || body).appendChild(style);
@@ -116,11 +123,15 @@ export async function injectControlPanel({
         `
     });
 
+    // Also expose legacy panel id on inner shell for tests. theme.css has a
+    // #leetforces-control-panel rule (border + border-radius) meant for an
+    // embedded panel, not this fullscreen overlay — explicitly override it.
     const shell = el(doc, 'div', {
         id: PANEL_ID,
         style: 'display:flex; flex-direction:column; height:100%; min-height:0; border:none; border-radius:0; background:transparent;'
     });
 
+    // Top bar
     const top = el(doc, 'div', {
         class: 'lf-header',
         style: `
@@ -130,7 +141,16 @@ export async function injectControlPanel({
         `
     });
     const topLeft = el(doc, 'div', { class: 'lf-header-title', style: 'min-width:0;' });
-    topLeft.appendChild(el(doc, 'span', { style: 'font-weight:800; font-size:15px; color:var(--lf-foreground); letter-spacing:0.02em;' }, 'LeetForces'));
+    topLeft.appendChild(el(doc, 'span', {
+        style: 'font-weight:800; font-size:15px; color:var(--lf-foreground); letter-spacing:0.02em;'
+    }, 'Codeforces'));
+    topLeft.appendChild(el(doc, 'span', {
+        style: `
+            font-size:10.5px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;
+            color:var(--lf-muted-foreground); background:var(--lf-surface-hover);
+            padding:2px 7px; border-radius:999px;
+        `
+    }, 'Enhanced View'));
     topLeft.appendChild(el(doc, 'span', {
         class: 'lf-problem-key',
         style: 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'
@@ -147,8 +167,12 @@ export async function injectControlPanel({
     top.appendChild(topLeft);
     top.appendChild(topRight);
 
-    const main = el(doc, 'div', { style: 'flex:1 1 auto; display:flex; min-height:0;' });
+    // Main split
+    const main = el(doc, 'div', {
+        style: 'flex:1 1 auto; display:flex; min-height:0;'
+    });
 
+    // Left: problem
     const left = el(doc, 'div', {
         id: 'leetforces-problem-pane',
         style: `
@@ -158,105 +182,385 @@ export async function injectControlPanel({
             color: var(--lf-foreground); font-size: var(--lf-text-base); line-height: 1.55;
         `
     });
-    left.appendChild(el(doc, 'div', { style: 'font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:12px;' }, 'Problem'));
+    // Breadcrumb back-link: target depends on whether this is a problemset
+    // page or a live contest page.
+    const isProblemsetPage = /\/problemset\/problem\//.test(doc.location ? doc.location.href : (typeof window !== 'undefined' ? window.location.href : ''));
+    const backHref = isProblemsetPage
+        ? '/problemset'
+        : (context.contestId ? `/contest/${context.contestId}` : '/problemset');
+    const backLink = el(doc, 'a', {
+        href: backHref,
+        style: `
+            display:inline-flex; align-items:center; gap:6px; font-size:13px;
+            color:var(--lf-muted-foreground); text-decoration:none; margin-bottom:14px;
+        `
+    }, `\u2190 Back to ${isProblemsetPage ? 'problemset' : 'contest'}`);
+    left.appendChild(backLink);
+
+    const metaRow = el(doc, 'div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:16px;' });
+    let metaRowHasContent = false;
+    if (context.rating != null) {
+        const ratingColor = getRatingColor(context.rating);
+        metaRow.appendChild(el(doc, 'span', {
+            style: `
+                font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px;
+                background:${ratingColor}22; color:${ratingColor};
+            `
+        }, `\u2605 ${context.rating}`));
+        metaRowHasContent = true;
+    }
+    (context.tags || []).forEach(tag => {
+        metaRow.appendChild(el(doc, 'span', {
+            style: `
+                font-size:11px; font-weight:600; padding:3px 9px; border-radius:999px;
+                background:var(--lf-surface-hover); color:var(--lf-muted-foreground);
+            `
+        }, tag));
+        metaRowHasContent = true;
+    });
+    if (metaRowHasContent) left.appendChild(metaRow);
+
+    // Fixes low-contrast sample test blocks: CF's own stylesheet gives these
+    // a light background + dark text, which is nearly invisible once the
+    // panel's dark theme is applied. Scoped to #leetforces-problem-pane so
+    // it can't leak out and affect the rest of the Codeforces page.
     if (!doc.getElementById('leetforces-sample-fix')) {
         const sampleFixStyle = el(doc, 'style', { id: 'leetforces-sample-fix' });
         sampleFixStyle.textContent = `
-            #leetforces-problem-pane .sample-test { background: var(--lf-background) !important; border: 1px solid var(--lf-border) !important; border-radius: var(--lf-radius-md) !important; margin-bottom: 14px !important; overflow: hidden !important; }
+            #leetforces-problem-pane .sample-test {
+                background: var(--lf-background) !important;
+                border: 1px solid var(--lf-border) !important;
+                border-radius: var(--lf-radius-md) !important;
+                margin-bottom: 14px !important;
+                overflow: hidden !important;
+            }
             #leetforces-problem-pane .sample-test .title,
             #leetforces-problem-pane .input .title,
-            #leetforces-problem-pane .output .title { background: var(--lf-surface-hover) !important; color: var(--lf-muted-foreground) !important; font-weight: 700 !important; font-size: 12px !important; text-transform: uppercase !important; letter-spacing: 0.05em !important; padding: 6px 10px !important; }
-            #leetforces-problem-pane .input, #leetforces-problem-pane .output { background: var(--lf-background) !important; }
+            #leetforces-problem-pane .output .title {
+                background: var(--lf-surface-hover) !important;
+                color: var(--lf-muted-foreground) !important;
+                font-weight: 700 !important;
+                font-size: 12px !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.05em !important;
+                padding: 6px 10px !important;
+            }
+            #leetforces-problem-pane .input,
+            #leetforces-problem-pane .output {
+                background: var(--lf-background) !important;
+            }
             #leetforces-problem-pane .input pre,
             #leetforces-problem-pane .output pre,
             #leetforces-problem-pane .sample-test pre,
             #leetforces-problem-pane .input .test-example-line,
-            #leetforces-problem-pane .input div { background: var(--lf-background) !important; color: var(--lf-foreground) !important; font-family: var(--lf-font-mono) !important; font-size: 13px !important; padding: 2px 12px !important; margin: 0 !important; white-space: pre-wrap !important; word-break: break-word !important; }
-            #leetforces-problem-pane .input pre { padding: 10px 12px !important; }
+            #leetforces-problem-pane .input div {
+                background: var(--lf-background) !important;
+                color: var(--lf-foreground) !important;
+                font-family: var(--lf-font-mono) !important;
+                font-size: 13px !important;
+                padding: 2px 12px !important;
+                margin: 0 !important;
+                white-space: pre-wrap !important;
+                word-break: break-word !important;
+            }
+            #leetforces-problem-pane .input pre {
+                padding: 10px 12px !important;
+            }
+
+            /* Problem statement typography: CF's cloned markup has no
+               consistent hierarchy on its own, so we impose one. */
             #leetforces-problem-pane .problem-statement > .header { margin-bottom: 18px; }
-            #leetforces-problem-pane .problem-statement .title { font-size: 19px; font-weight: 800; color: var(--lf-foreground); margin-bottom: 10px; }
+            #leetforces-problem-pane .problem-statement .title {
+                font-size: 19px; font-weight: 800; color: var(--lf-foreground);
+                margin-bottom: 10px;
+            }
             #leetforces-problem-pane .problem-statement .time-limit,
-            #leetforces-problem-pane .problem-statement .memory-limit { font-size: 12.5px; color: var(--lf-muted-foreground); margin: 2px 0; }
-            #leetforces-problem-pane .problem-statement .section-title { font-size: 14px; font-weight: 700; color: var(--lf-foreground); margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--lf-border); }
+            #leetforces-problem-pane .problem-statement .memory-limit {
+                font-size: 12.5px; color: var(--lf-muted-foreground); margin: 2px 0;
+            }
+            #leetforces-problem-pane .problem-statement .section-title {
+                font-size: 14px; font-weight: 700; color: var(--lf-foreground);
+                margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--lf-border);
+            }
             #leetforces-problem-pane .problem-statement p { margin: 10px 0; }
             #leetforces-problem-pane .problem-statement strong { color: var(--lf-foreground); }
             #leetforces-problem-pane .problem-statement a { color: var(--lf-info, #60a5fa); }
+
+            /* Slim, dark scrollbars instead of the OS-default light ones. */
             #leetforces-workspace ::-webkit-scrollbar { width: 10px; height: 10px; }
             #leetforces-workspace ::-webkit-scrollbar-track { background: transparent; }
-            #leetforces-workspace ::-webkit-scrollbar-thumb { background: var(--lf-border-strong); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+            #leetforces-workspace ::-webkit-scrollbar-thumb {
+                background: var(--lf-border-strong); border-radius: 999px;
+                border: 2px solid transparent; background-clip: padding-box;
+            }
             #leetforces-workspace ::-webkit-scrollbar-thumb:hover { background: var(--lf-muted-foreground); }
         `;
         const styleTarget = doc.head || doc.body || doc.documentElement;
-        if (styleTarget && typeof styleTarget.appendChild === 'function') styleTarget.appendChild(sampleFixStyle);
+        if (styleTarget && typeof styleTarget.appendChild === 'function') {
+            styleTarget.appendChild(sampleFixStyle);
+        }
     }
+
     const statement = doc.querySelector && doc.querySelector('.problem-statement');
     if (statement && typeof statement.cloneNode === 'function') {
         const clone = statement.cloneNode(true);
+        // neutralize CF absolute positioning quirks
         if (clone.style) clone.style.cssText = 'position:static; width:auto; max-width:100%;';
+        // Remove CF's raw sample blocks — replaced below with custom
+        // "Example N" cards (with copy buttons) built from already-
+        // extracted sample data, rather than restyling CF's markup in place.
+        clone.querySelectorAll('.sample-tests, .sample-test').forEach(node => node.remove());
         left.appendChild(clone);
     } else {
-        left.appendChild(el(doc, 'div', { style: 'color:var(--lf-muted-foreground);' }, 'Problem statement could not be cloned. Use Classic CF to read it on the original page.'));
+        left.appendChild(el(doc, 'div', { style: 'color:var(--lf-muted-foreground);' },
+            'Problem statement could not be cloned. Use Classic CF to read it on the original page.'));
     }
 
-    const right = el(doc, 'div', { style: 'flex:1 1 52%; min-width:320px; display:flex; flex-direction:column; min-height:0; background:var(--lf-background);' });
-    const toolbar = el(doc, 'div', { class: 'lf-toolbar', style: `
+    const sampleTests = (context && context.sampleTests) || [];
+    if (sampleTests.length > 0) {
+        const examplesWrap = el(doc, 'div', { style: 'margin-top:8px;' });
+        examplesWrap.appendChild(el(doc, 'div', {
+            style: 'font-size:14px; font-weight:700; color:var(--lf-foreground); margin-bottom:10px;'
+        }, 'Examples'));
+
+        sampleTests.forEach((test, i) => {
+            const card = el(doc, 'div', {
+                style: `
+                    border:1px solid var(--lf-border); border-radius:var(--lf-radius-md);
+                    margin-bottom:12px; overflow:hidden; background:var(--lf-background);
+                `
+            });
+            const cardHeader = el(doc, 'div', {
+                style: `
+                    display:flex; align-items:center; justify-content:space-between;
+                    padding:8px 12px; background:var(--lf-surface-hover);
+                    font-size:12px; font-weight:700; color:var(--lf-foreground);
+                `
+            });
+            cardHeader.appendChild(el(doc, 'span', {}, `Example ${i + 1}`));
+            const copyBtn = el(doc, 'button', {
+                type: 'button',
+                style: `
+                    font-size:11px; font-weight:600; padding:3px 9px; border-radius:6px;
+                    border:1px solid var(--lf-border); background:var(--lf-surface);
+                    color:var(--lf-muted-foreground); cursor:pointer;
+                `
+            }, 'Copy');
+            copyBtn.addEventListener('click', () => {
+                const text = `Input:\n${test.input}\n\nOutput:\n${test.output}`;
+                try {
+                    if (doc.defaultView && doc.defaultView.navigator && doc.defaultView.navigator.clipboard) {
+                        doc.defaultView.navigator.clipboard.writeText(text);
+                    } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                        navigator.clipboard.writeText(text);
+                    }
+                    const original = copyBtn.textContent;
+                    copyBtn.textContent = 'Copied';
+                    setTimeout(() => { copyBtn.textContent = original; }, 1200);
+                } catch (_) { /* ignore */ }
+            });
+            cardHeader.appendChild(copyBtn);
+            card.appendChild(cardHeader);
+
+            const body = el(doc, 'div', { style: 'display:flex; flex-wrap:wrap;' });
+            [['Input', test.input], ['Output', test.output]].forEach(([label, value]) => {
+                const col = el(doc, 'div', { style: 'flex:1 1 50%; min-width:140px; padding:10px 12px;' });
+                col.appendChild(el(doc, 'div', {
+                    style: 'font-size:10.5px; font-weight:700; letter-spacing:0.05em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:4px;'
+                }, label));
+                col.appendChild(el(doc, 'pre', {
+                    style: 'margin:0; font-family:var(--lf-font-mono); font-size:12.5px; color:var(--lf-foreground); white-space:pre-wrap; word-break:break-word;'
+                }, value));
+                body.appendChild(col);
+            });
+            card.appendChild(body);
+            examplesWrap.appendChild(card);
+        });
+
+        left.appendChild(examplesWrap);
+    }
+
+    // Right: IDE
+    const right = el(doc, 'div', {
+        style: 'flex:1 1 52%; min-width:320px; display:flex; flex-direction:column; min-height:0; background:var(--lf-background);'
+    });
+
+    const toolbar = el(doc, 'div', {
+        class: 'lf-toolbar',
+        style: `
             flex:0 0 auto; flex-wrap:wrap;
             padding:10px 12px; border-bottom:1px solid var(--lf-border); background:var(--lf-surface);
             margin-bottom:0;
-        ` });
-    const langSelect = el(doc, 'select', { id: 'leetforces-lang-select', class: 'lf-select', style: 'min-width:180px;' });
-    const submitBtn = el(doc, 'button', { id: 'leetforces-submit-btn', type: 'button', class: 'lf-btn lf-btn-primary' }, 'Submit');
+        `
+    });
+
+    const langSelect = el(doc, 'select', {
+        id: 'leetforces-lang-select',
+        class: 'lf-select',
+        style: 'min-width:180px;'
+    });
+
+    const submitBtn = el(doc, 'button', {
+        id: 'leetforces-submit-btn',
+        type: 'button',
+        class: 'lf-btn lf-btn-primary'
+    }, 'Submit');
+
     toolbar.appendChild(langSelect);
     toolbar.appendChild(submitBtn);
-    const codeEditor = el(doc, 'textarea', { id: 'leetforces-code-editor', spellcheck: 'false', style: `
+
+    const codeEditor = el(doc, 'textarea', {
+        id: 'leetforces-code-editor',
+        spellcheck: 'false',
+        style: `
             flex:1 1 auto; min-height:220px; width:100%; resize:none; border:none;
             padding:14px 16px; background:var(--lf-background); color:var(--lf-foreground);
             font-family: var(--lf-font-mono);
             font-size:13px; line-height:1.5; tab-size:4; white-space:pre; overflow:auto;
-        ` });
-    const consolePane = el(doc, 'div', { id: 'leetforces-console', style: `
+        `
+    });
+
+    const consolePane = el(doc, 'div', {
+        id: 'leetforces-console',
+        style: `
             flex:0 0 34%; min-height:140px; max-height:42%; overflow:auto;
             border-top:1px solid var(--lf-border); background:var(--lf-surface); padding:12px 14px;
-        ` });
-    consolePane.appendChild(el(doc, 'div', { style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:6px;' }, 'Console'));
+        `
+    });
+    consolePane.appendChild(el(doc, 'div', {
+        style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:6px;'
+    }, 'Console'));
     const verdictEl = el(doc, 'div', { id: 'leetforces-verdict-panel' });
     consolePane.appendChild(verdictEl);
+
     right.appendChild(toolbar);
     right.appendChild(codeEditor);
     right.appendChild(consolePane);
+
     main.appendChild(left);
     main.appendChild(right);
+
     shell.appendChild(top);
     shell.appendChild(main);
     workspace.appendChild(shell);
     body.appendChild(workspace);
 
+    // Language default: saved → G++20 (ignore CF page selection)
     let preferredLang = DEFAULT_LANG;
-    try { const savedLang = await getPreferredLanguage(); if (savedLang) preferredLang = savedLang; } catch (_) {}
-    populateLanguageSelector(langSelect, (formDetails && formDetails.availableLanguages) || [], preferredLang);
+    try {
+        const savedLang = await getPreferredLanguage();
+        if (savedLang) preferredLang = savedLang;
+    } catch (_) { /* ignore */ }
+
+    populateLanguageSelector(
+        langSelect,
+        (formDetails && formDetails.availableLanguages) || [],
+        preferredLang
+    );
+
     const problemKey = context.problemKey || '';
+
+    // Loads saved code for the currently selected language, or falls back
+    // to that language's boilerplate. Shared by initial load and every
+    // subsequent language switch so there's one source of truth.
     const loadCodeForCurrentLanguage = async () => {
         const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
         const langTitle = (opt && opt.text) || DEFAULT_LANG;
         const languageFamily = getLanguageFamily(langTitle) || 'C++';
+
         let codeToApply = '';
-        try { if (problemKey) { const saved = await getSavedCode(problemKey, languageFamily); if (typeof saved === 'string' && saved.trim()) codeToApply = saved; } } catch (_) {}
+        try {
+            if (problemKey) {
+                const saved = await getSavedCode(problemKey, languageFamily);
+                if (typeof saved === 'string' && saved.trim()) codeToApply = saved;
+            }
+        } catch (_) { /* ignore */ }
+
         let usedBoilerplate = false;
-        if (!codeToApply) { const boilerplate = getBoilerplate(languageFamily); codeToApply = boilerplate ? boilerplate.code : ''; usedBoilerplate = true; if (problemKey) safeSaveCode(problemKey, languageFamily, codeToApply); }
+        if (!codeToApply) {
+            const boilerplate = getBoilerplate(languageFamily);
+            codeToApply = boilerplate ? boilerplate.code : '';
+            usedBoilerplate = true;
+            if (problemKey) safeSaveCode(problemKey, languageFamily, codeToApply);
+        }
+
         codeEditor.value = codeToApply;
-        if (usedBoilerplate) { const boilerplate = getBoilerplate(languageFamily); if (boilerplate) { const { line, col } = offsetToLineCol(boilerplate.code, boilerplate.cursorOffset); setTimeout(() => placeCursorInTextarea(codeEditor, line, col), 40); } }
+
+        if (usedBoilerplate) {
+            const boilerplate = getBoilerplate(languageFamily);
+            if (boilerplate) {
+                const { line, col } = offsetToLineCol(boilerplate.code, boilerplate.cursorOffset);
+                setTimeout(() => placeCursorInTextarea(codeEditor, line, col), 40);
+            }
+        }
+
         return languageFamily;
     };
+
     let currentLanguageFamily = await loadCodeForCurrentLanguage();
-    langSelect.addEventListener('change', async () => { try { const opt = langSelect.options && langSelect.options[langSelect.selectedIndex]; if (opt && opt.text) savePreferredLanguage(opt.text); } catch (_) {} currentLanguageFamily = await loadCodeForCurrentLanguage(); });
+
+    langSelect.addEventListener('change', async () => {
+        try {
+            const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
+            if (opt && opt.text) savePreferredLanguage(opt.text);
+        } catch (_) { /* ignore */ }
+        currentLanguageFamily = await loadCodeForCurrentLanguage();
+    });
+
     let saveTimer = null;
     const persistCode = () => safeSaveCode(problemKey, currentLanguageFamily, String(codeEditor.value || ''));
-    codeEditor.addEventListener('input', () => { if (saveTimer) clearTimeout(saveTimer); saveTimer = setTimeout(persistCode, 300); });
-    codeEditor.addEventListener('keydown', (e) => { if (!e || e.key !== 'Tab') return; e.preventDefault(); try { const start = codeEditor.selectionStart != null ? codeEditor.selectionStart : String(codeEditor.value || '').length; const end = codeEditor.selectionEnd != null ? codeEditor.selectionEnd : start; const value = String(codeEditor.value || ''); codeEditor.value = `${value.slice(0, start)}    ${value.slice(end)}`; codeEditor.selectionStart = codeEditor.selectionEnd = start + 4; persistCode(); } catch (_) {} });
-    classicBtn.addEventListener('click', () => { try { if (body.classList && body.classList.remove) body.classList.remove('leetforces-active'); if (workspace.parentNode) workspace.parentNode.removeChild(workspace); } catch (_) {} });
-    const getSelectedLangTitle = () => { try { const opt = langSelect.options && langSelect.options[langSelect.selectedIndex]; return (opt && opt.text) || DEFAULT_LANG; } catch (_) { return DEFAULT_LANG; } };
-    const getSourceCode = () => { let code = ''; try { code = String(codeEditor.value != null ? codeEditor.value : ''); } catch (_) { code = ''; } if (!code.trim()) { const fallback = getBoilerplate(currentLanguageFamily || 'C++'); code = fallback ? fallback.code : ''; try { codeEditor.value = code; } catch (_) {} } return code.replace(/\s+$/g, ''); };
-    const showVerdict = (data) => { const renderer = typeof renderVerdict === 'function' ? renderVerdict : renderVerdictPanel; try { renderer(verdictEl, data); } catch (_) {} };
+    codeEditor.addEventListener('input', () => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(persistCode, 300);
+    });
+    codeEditor.addEventListener('keydown', (e) => {
+        if (!e || e.key !== 'Tab') return;
+        e.preventDefault();
+        try {
+            const start = codeEditor.selectionStart != null ? codeEditor.selectionStart : String(codeEditor.value || '').length;
+            const end = codeEditor.selectionEnd != null ? codeEditor.selectionEnd : start;
+            const value = String(codeEditor.value || '');
+            codeEditor.value = `${value.slice(0, start)}    ${value.slice(end)}`;
+            codeEditor.selectionStart = codeEditor.selectionEnd = start + 4;
+            persistCode();
+        } catch (_) { /* ignore */ }
+    });
+
+    classicBtn.addEventListener('click', () => {
+        try {
+            if (body.classList && body.classList.remove) body.classList.remove('leetforces-active');
+            if (workspace.parentNode) workspace.parentNode.removeChild(workspace);
+        } catch (_) { /* ignore */ }
+    });
+
+    const getSelectedLangTitle = () => {
+        try {
+            const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
+            return (opt && opt.text) || DEFAULT_LANG;
+        } catch (_) {
+            return DEFAULT_LANG;
+        }
+    };
+
+    const getSourceCode = () => {
+        let code = '';
+        try { code = String(codeEditor.value != null ? codeEditor.value : ''); } catch (_) { code = ''; }
+        if (!code.trim()) {
+            const fallback = getBoilerplate(currentLanguageFamily || 'C++');
+            code = fallback ? fallback.code : '';
+            try { codeEditor.value = code; } catch (_) { /* ignore */ }
+        }
+        return code.replace(/\s+$/g, '');
+    };
+
+    // Falls back to the real renderVerdictPanel (same function used by
+    // content.js in normal operation) rather than maintaining a second,
+    // separately-drifting copy of the same rendering logic.
+    const showVerdict = (data) => {
+        const renderer = typeof renderVerdict === 'function' ? renderVerdict : renderVerdictPanel;
+        try { renderer(verdictEl, data); } catch (_) { /* ignore */ }
+    };
+
     submitBtn.addEventListener('click', async () => {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Submitting…';
@@ -264,13 +568,30 @@ export async function injectControlPanel({
         try {
             const sourceCode = getSourceCode();
             persistCode();
-            if (typeof submitSolution !== 'function') throw new Error('Submit handler missing. Reload the extension and refresh this page.');
+
+            if (typeof submitSolution !== 'function') {
+                throw new Error('Submit handler missing. Reload the extension and refresh this page.');
+            }
+
             showVerdict({ statusKey: 'TESTING', formattedText: 'Submitting to Codeforces…' });
+
             const result = await submitSolution(sourceCode, getSelectedLangTitle());
-            if (!result || !result.success) { verdictEl.innerHTML = buildInlineAlert('error', `Submission failed: ${(result && result.error) || 'unknown error'}`); return; }
-            showVerdict({ statusKey: 'TESTING', formattedText: 'In queue… waiting for verdict', submissionId: result.submissionId });
+            if (!result || !result.success) {
+                verdictEl.innerHTML = buildInlineAlert('error', `Submission failed: ${(result && result.error) || 'unknown error'}`);
+                return;
+            }
+
+            showVerdict({
+                statusKey: 'TESTING',
+                formattedText: 'In queue… waiting for verdict',
+                submissionId: result.submissionId
+            });
+
             if (typeof pollVerdict === 'function') {
-                await pollVerdict({ submissionId: result.submissionId, onUpdate: (verdictData) => showVerdict(verdictData) });
+                await pollVerdict({
+                    submissionId: result.submissionId,
+                    onUpdate: (verdictData) => showVerdict(verdictData)
+                });
             }
         } catch (err) {
             verdictEl.innerHTML = buildInlineAlert('error', (err && err.message) || 'Submit failed');
@@ -279,5 +600,6 @@ export async function injectControlPanel({
             submitBtn.textContent = 'Submit';
         }
     });
+
     return shell;
 }

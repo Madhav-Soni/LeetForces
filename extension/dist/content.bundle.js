@@ -2015,11 +2015,6 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
 
 
 
-
-
-
-const WORKSPACE_ID = 'leetforces-workspace';
-const PANEL_ID = 'leetforces-control-panel'; // kept for tests / legacy queries
 const DEFAULT_LANG = 'GNU G++20 (64 bit)';
 
 function escapeHtml(str = '') {
@@ -2049,23 +2044,6 @@ function el(doc, tag, attrs = {}, text) {
     return node;
 }
 
-function placeCursorInTextarea(textarea, line, col) {
-    try {
-        if (!textarea || typeof textarea.setSelectionRange !== 'function') return;
-        const offset = computeCursorOffset(String(textarea.value || ''), line, col);
-        if (typeof textarea.focus === 'function') textarea.focus();
-        textarea.setSelectionRange(offset, offset);
-    } catch (_) { /* ignore */ }
-}
-
-function safeSaveCode(problemKey, languageFamily, code) {
-    if (!problemKey || typeof code !== 'string' || !code.trim()) return;
-    try {
-        const p = saveCode(problemKey, languageFamily, code);
-        if (p && typeof p.catch === 'function') p.catch(() => { });
-    } catch (_) { /* ignore */ }
-}
-
 /** Wraps a one-line message in the same alert style as everything else. */
 function buildInlineAlert(variant, message) {
     return `<div class="lf-alert lf-alert-${variant}"><div class="lf-alert-title">${escapeHtml(message)}</div></div>`;
@@ -2083,7 +2061,7 @@ async function injectControlPanel({
     pollVerdict,
     renderVerdict
 }) {
-    const prev = doc.getElementById(WORKSPACE_ID) || doc.getElementById(PANEL_ID);
+    const prev = doc.getElementById('leetforces-workspace') || doc.getElementById('leetforces-control-panel');
     if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
 
     const body = doc.body;
@@ -2103,7 +2081,7 @@ async function injectControlPanel({
     else body.className = `${body.className || ''} leetforces-active`.trim();
 
     const workspace = el(doc, 'div', {
-        id: WORKSPACE_ID,
+        id: 'leetforces-workspace',
         style: `
             position: fixed; inset: 0; z-index: 2147483000;
             display: flex; flex-direction: column;
@@ -2113,7 +2091,7 @@ async function injectControlPanel({
     });
 
     const shell = el(doc, 'div', {
-        id: PANEL_ID,
+        id: 'leetforces-control-panel',
         style: 'display:flex; flex-direction:column; height:100%; min-height:0; border:none; border-radius:0; background:transparent;'
     });
 
@@ -2201,9 +2179,7 @@ async function injectControlPanel({
             margin-bottom:0;
         ` });
     const langSelect = el(doc, 'select', { id: 'leetforces-lang-select', class: 'lf-select', style: 'min-width:180px;' });
-    const submitBtn = el(doc, 'button', { id: 'leetforces-submit-btn', type: 'button', class: 'lf-btn lf-btn-primary' }, 'Submit');
     toolbar.appendChild(langSelect);
-    toolbar.appendChild(submitBtn);
     const codeEditor = el(doc, 'textarea', { id: 'leetforces-code-editor', spellcheck: 'false', style: `
             flex:1 1 auto; min-height:220px; width:100%; resize:none; border:none;
             padding:14px 16px; background:var(--lf-background); color:var(--lf-foreground);
@@ -2227,54 +2203,6 @@ async function injectControlPanel({
     workspace.appendChild(shell);
     body.appendChild(workspace);
 
-    let preferredLang = DEFAULT_LANG;
-    try { const savedLang = await getPreferredLanguage(); if (savedLang) preferredLang = savedLang; } catch (_) {}
-    populateLanguageSelector(langSelect, (formDetails && formDetails.availableLanguages) || [], preferredLang);
-    const problemKey = context.problemKey || '';
-    const loadCodeForCurrentLanguage = async () => {
-        const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-        const langTitle = (opt && opt.text) || DEFAULT_LANG;
-        const languageFamily = getLanguageFamily(langTitle) || 'C++';
-        let codeToApply = '';
-        try { if (problemKey) { const saved = await getSavedCode(problemKey, languageFamily); if (typeof saved === 'string' && saved.trim()) codeToApply = saved; } } catch (_) {}
-        let usedBoilerplate = false;
-        if (!codeToApply) { const boilerplate = getBoilerplate(languageFamily); codeToApply = boilerplate ? boilerplate.code : ''; usedBoilerplate = true; if (problemKey) safeSaveCode(problemKey, languageFamily, codeToApply); }
-        codeEditor.value = codeToApply;
-        if (usedBoilerplate) { const boilerplate = getBoilerplate(languageFamily); if (boilerplate) { const { line, col } = offsetToLineCol(boilerplate.code, boilerplate.cursorOffset); setTimeout(() => placeCursorInTextarea(codeEditor, line, col), 40); } }
-        return languageFamily;
-    };
-    let currentLanguageFamily = await loadCodeForCurrentLanguage();
-    langSelect.addEventListener('change', async () => { try { const opt = langSelect.options && langSelect.options[langSelect.selectedIndex]; if (opt && opt.text) savePreferredLanguage(opt.text); } catch (_) {} currentLanguageFamily = await loadCodeForCurrentLanguage(); });
-    let saveTimer = null;
-    const persistCode = () => safeSaveCode(problemKey, currentLanguageFamily, String(codeEditor.value || ''));
-    codeEditor.addEventListener('input', () => { if (saveTimer) clearTimeout(saveTimer); saveTimer = setTimeout(persistCode, 300); });
-    codeEditor.addEventListener('keydown', (e) => { if (!e || e.key !== 'Tab') return; e.preventDefault(); try { const start = codeEditor.selectionStart != null ? codeEditor.selectionStart : String(codeEditor.value || '').length; const end = codeEditor.selectionEnd != null ? codeEditor.selectionEnd : start; const value = String(codeEditor.value || ''); codeEditor.value = `${value.slice(0, start)}    ${value.slice(end)}`; codeEditor.selectionStart = codeEditor.selectionEnd = start + 4; persistCode(); } catch (_) {} });
-    classicBtn.addEventListener('click', () => { try { if (body.classList && body.classList.remove) body.classList.remove('leetforces-active'); if (workspace.parentNode) workspace.parentNode.removeChild(workspace); } catch (_) {} });
-    const getSelectedLangTitle = () => { try { const opt = langSelect.options && langSelect.options[langSelect.selectedIndex]; return (opt && opt.text) || DEFAULT_LANG; } catch (_) { return DEFAULT_LANG; } };
-    const getSourceCode = () => { let code = ''; try { code = String(codeEditor.value != null ? codeEditor.value : ''); } catch (_) { code = ''; } if (!code.trim()) { const fallback = getBoilerplate(currentLanguageFamily || 'C++'); code = fallback ? fallback.code : ''; try { codeEditor.value = code; } catch (_) {} } return code.replace(/\s+$/g, ''); };
-    const showVerdict = (data) => { const renderer = typeof renderVerdict === 'function' ? renderVerdict : renderVerdictPanel; try { renderer(verdictEl, data); } catch (_) {} };
-    submitBtn.addEventListener('click', async () => {
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Submitting…';
-        verdictEl.innerHTML = '';
-        try {
-            const sourceCode = getSourceCode();
-            persistCode();
-            if (typeof submitSolution !== 'function') throw new Error('Submit handler missing. Reload the extension and refresh this page.');
-            showVerdict({ statusKey: 'TESTING', formattedText: 'Submitting to Codeforces…' });
-            const result = await submitSolution(sourceCode, getSelectedLangTitle());
-            if (!result || !result.success) { verdictEl.innerHTML = buildInlineAlert('error', `Submission failed: ${(result && result.error) || 'unknown error'}`); return; }
-            showVerdict({ statusKey: 'TESTING', formattedText: 'In queue… waiting for verdict', submissionId: result.submissionId });
-            if (typeof pollVerdict === 'function') {
-                await pollVerdict({ submissionId: result.submissionId, onUpdate: (verdictData) => showVerdict(verdictData) });
-            }
-        } catch (err) {
-            verdictEl.innerHTML = buildInlineAlert('error', (err && err.message) || 'Submit failed');
-        } finally {
-            submitBtn.disabled = false;
-            submitBtn.textContent = 'Submit';
-        }
-    });
     return shell;
 }
 
