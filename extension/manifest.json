@@ -36,6 +36,7 @@
         "https://codeforces.com/gym/*/problem/*",
         "https://codeforces.com/group/*/contest/*/problem/*"
       ],
+      "css": ["src/theme.css"],
       "js": ["dist/content.bundle.js"],
       "run_at": "document_idle"
     }

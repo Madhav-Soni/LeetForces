@@ -3,6 +3,12 @@
  * LeetCode-style split view on Codeforces problem pages:
  * left = problem statement, right = language + editor + Run/Submit + live verdicts.
  * Submits through the logged-in Codeforces session — no file download/upload.
+ *
+ * All visual styling (colors, spacing, buttons, alerts) comes from
+ * theme.css's design tokens and component classes — this file should not
+ * define its own competing token/color system. theme.css is loaded once
+ * globally via manifest.json's content_scripts, so its custom properties
+ * and .lf-* classes are available here without any injection.
  */
 
 import { runSampleTests } from './testRunner.js';
@@ -15,7 +21,7 @@ import {
 } from './storage.js';
 import { getBoilerplate } from './boilerplates.js';
 import { computeCursorOffset, offsetToLineCol } from './editorManager.js';
-import { getVerdictTheme } from './verdictUI.js';
+import { getVerdictTheme, renderVerdictPanel } from './verdictUI.js';
 
 const WORKSPACE_ID = 'leetforces-workspace';
 const PANEL_ID = 'leetforces-control-panel'; // kept for tests / legacy queries
@@ -66,53 +72,32 @@ function safeSaveCode(problemKey, languageFamily, code) {
     } catch (_) { /* ignore */ }
 }
 
+/**
+ * Renders sample test case results using theme.css's alert/badge classes
+ * (same visual language as the real Codeforces verdict banner) so both
+ * surfaces feel like one consistent system instead of two.
+ */
 function buildTestResultsHtml(results) {
     if (!results || results.length === 0) return '';
     return results.map(r => {
-        const color = r.passed ? '#22c55e' : (r.status === 'SKIPPED' ? '#64748b' : '#ef4444');
+        const variant = r.passed ? 'success' : (r.status === 'SKIPPED' ? 'neutral' : 'error');
         const label = r.passed ? 'PASS' : String(r.status || '').replace(/_/g, ' ');
         const showDiff = !r.passed && r.status !== 'SKIPPED';
         return `
-            <div style="border-left:3px solid ${color}; padding:8px 10px; margin-top:8px; font-size:12px; font-family:ui-monospace,Menlo,monospace;">
-                <div style="color:${color}; font-weight:700;">Case ${r.index}: ${label}</div>
+            <div class="lf-alert lf-alert-${variant}">
+                <div class="lf-alert-title">Case ${r.index}: ${escapeHtml(label)}</div>
                 ${showDiff ? `
-                    <div style="opacity:0.9; white-space:pre-wrap; margin-top:4px; color:#cbd5e1;">Expected:\n${escapeHtml(r.expected)}</div>
-                    <div style="opacity:0.9; white-space:pre-wrap; margin-top:4px; color:#cbd5e1;">Output:\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
+                    <div class="lf-alert-diff">Expected:\n${escapeHtml(r.expected)}</div>
+                    <div class="lf-alert-diff">Output:\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
                 ` : ''}
             </div>
         `;
     }).join('');
 }
 
-function renderLocalVerdict(container, verdictData = {}) {
-    if (!container) return;
-    const {
-        statusKey = 'TESTING',
-        formattedText = 'Testing...',
-        submissionId = null,
-        timeMs = 0,
-        memoryBytes = 0
-    } = verdictData;
-    const theme = getVerdictTheme(statusKey);
-    const memoryMb = memoryBytes ? (memoryBytes / (1024 * 1024)).toFixed(1) : null;
-
-    container.style.cssText = `
-        margin-top: 8px; padding: 12px 14px; border-radius: 10px;
-        background: ${theme.bgColor}; border: 1px solid ${theme.borderColor}; color: ${theme.color};
-        font-family: system-ui, -apple-system, sans-serif;
-    `;
-    container.innerHTML = `
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-            <div style="font-weight:750; font-size:15px;">${theme.icon} ${escapeHtml(formattedText)}</div>
-            <span style="font-size:11px; font-weight:700; letter-spacing:0.04em; padding:3px 8px; border-radius:999px; background:${theme.borderColor};">${escapeHtml(theme.badgeLabel)}</span>
-        </div>
-        <div style="display:flex; flex-wrap:wrap; gap:12px; margin-top:8px; font-size:12px; opacity:0.95;">
-            ${submissionId ? `<span>Submission <strong>${escapeHtml(String(submissionId))}</strong></span>` : ''}
-            ${timeMs > 0 ? `<span>Time <strong>${timeMs} ms</strong></span>` : ''}
-            ${memoryMb ? `<span>Memory <strong>${memoryMb} MB</strong></span>` : ''}
-            ${theme.isPending ? `<span style="font-style:italic;">Polling Codeforces…</span>` : ''}
-        </div>
-    `;
+/** Wraps a one-line message in the same alert style as everything else. */
+function buildInlineAlert(variant, message) {
+    return `<div class="lf-alert lf-alert-${variant}"><div class="lf-alert-title">${escapeHtml(message)}</div></div>`;
 }
 
 /**
@@ -134,6 +119,8 @@ export async function injectControlPanel({
     const body = doc.body;
     if (!body) throw new Error('document.body is not available');
 
+    // Structural rules only — no color/token definitions here.
+    // All colors, spacing, and component styling come from theme.css.
     if (!doc.getElementById('leetforces-hide-native')) {
         const style = el(doc, 'style', { id: 'leetforces-hide-native' });
         style.textContent = `
@@ -142,76 +129,7 @@ export async function injectControlPanel({
             #leetforces-workspace pre, #leetforces-workspace .problem-statement {
                 white-space: pre-wrap; word-break: break-word;
             }
-            #leetforces-code-editor:focus { outline: 1px solid var(--lf-accent, #22c55e); outline-offset: -1px; }
-
-            /* --- Design tokens --- */
-            #leetforces-workspace {
-                --lf-bg: #0b1120;
-                --lf-surface: #0f172a;
-                --lf-surface-2: #111827;
-                --lf-border: #1e293b;
-                --lf-border-strong: #334155;
-                --lf-text: #e2e8f0;
-                --lf-text-muted: #94a3b8;
-                --lf-text-dim: #64748b;
-                --lf-accent: #22c55e;
-                --lf-accent-text: #052e16;
-                --lf-radius-sm: 6px;
-                --lf-radius-md: 8px;
-                --lf-space-1: 4px;
-                --lf-space-2: 8px;
-                --lf-space-3: 12px;
-                --lf-space-4: 16px;
-            }
-
-            /* --- Buttons --- */
-            #leetforces-workspace .lf-btn {
-                flex: 0 0 auto;
-                padding: 8px 14px;
-                border: 1px solid var(--lf-border-strong);
-                border-radius: var(--lf-radius-md);
-                background: var(--lf-surface-2);
-                color: var(--lf-text);
-                font-weight: 600;
-                font-size: 13px;
-                cursor: pointer;
-                transition: background-color 120ms ease, transform 120ms ease, opacity 120ms ease;
-            }
-            #leetforces-workspace .lf-btn:hover:not(:disabled) { background: var(--lf-border); }
-            #leetforces-workspace .lf-btn:active:not(:disabled) { transform: scale(0.98); }
-            #leetforces-workspace .lf-btn:disabled { opacity: 0.6; cursor: wait; transform: none; }
-            #leetforces-workspace .lf-btn:focus-visible {
-                outline: 2px solid var(--lf-accent); outline-offset: 1px;
-            }
-            #leetforces-workspace .lf-btn-primary {
-                background: var(--lf-accent);
-                border-color: var(--lf-accent);
-                color: var(--lf-accent-text);
-                font-weight: 700;
-            }
-            #leetforces-workspace .lf-btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
-
-            /* --- Select --- */
-            #leetforces-workspace .lf-select {
-                border: 1px solid var(--lf-border-strong);
-                border-radius: var(--lf-radius-md);
-                background: var(--lf-surface-2);
-                color: var(--lf-text);
-                padding: 8px 10px;
-                font-size: 13px;
-            }
-            #leetforces-workspace .lf-select:focus-visible {
-                outline: 2px solid var(--lf-accent); outline-offset: 1px;
-            }
-
-            /* --- Subtle entrance for new verdicts/results, not a flashy animation --- */
-            #leetforces-workspace .lf-fade-in {
-                animation: lf-fade-in 150ms ease;
-            }
-            @keyframes lf-fade-in {
-                from { opacity: 0; transform: translateY(2px); }
-                to { opacity: 1; transform: translateY(0); }
-            }
+            #leetforces-code-editor:focus { outline: 1px solid var(--lf-accent); outline-offset: -1px; }
         `;
         (doc.head || body).appendChild(style);
     }
@@ -223,30 +141,35 @@ export async function injectControlPanel({
         style: `
             position: fixed; inset: 0; z-index: 2147483000;
             display: flex; flex-direction: column;
-            background: #0b1120; color: #e2e8f0;
-            font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+            background: var(--lf-background); color: var(--lf-foreground);
+            font-family: var(--lf-font-sans);
         `
     });
 
-    // Also expose legacy panel id on inner shell for tests
+    // Also expose legacy panel id on inner shell for tests. theme.css has a
+    // #leetforces-control-panel rule (border + border-radius) meant for an
+    // embedded panel, not this fullscreen overlay — explicitly override it.
     const shell = el(doc, 'div', {
         id: PANEL_ID,
-        style: 'display:flex; flex-direction:column; height:100%; min-height:0;'
+        style: 'display:flex; flex-direction:column; height:100%; min-height:0; border:none; border-radius:0; background:transparent;'
     });
 
     // Top bar
     const top = el(doc, 'div', {
+        class: 'lf-header',
         style: `
-            flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
-            gap:12px; padding:10px 14px; border-bottom:1px solid #1e293b; background:#0f172a;
+            flex:0 0 auto; justify-content:space-between;
+            padding:10px 14px; background:var(--lf-surface);
+            margin-bottom:0; border-radius:0;
         `
     });
-    const topLeft = el(doc, 'div', { style: 'display:flex; align-items:baseline; gap:10px; min-width:0;' });
+    const topLeft = el(doc, 'div', { class: 'lf-header-title', style: 'min-width:0;' });
     topLeft.appendChild(el(doc, 'span', {
-        style: 'font-weight:800; font-size:15px; color:#f8fafc; letter-spacing:0.02em;'
+        style: 'font-weight:800; font-size:15px; color:var(--lf-foreground); letter-spacing:0.02em;'
     }, 'LeetForces'));
     topLeft.appendChild(el(doc, 'span', {
-        style: 'font-size:13px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'
+        class: 'lf-problem-key',
+        style: 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'
     }, context.problemName
         ? `${context.problemIndex || ''}. ${context.problemName}`
         : (context.problemKey || 'Problem')));
@@ -271,12 +194,12 @@ export async function injectControlPanel({
         style: `
             flex: 1 1 48%; min-width: 280px; max-width: 55%;
             overflow: auto; padding: 18px 20px 28px;
-            background: #111827; border-right: 1px solid #1e293b;
-            color: #e5e7eb; font-size: 14px; line-height: 1.55;
+            background: var(--lf-surface); border-right: 1px solid var(--lf-border);
+            color: var(--lf-foreground); font-size: var(--lf-text-base); line-height: 1.55;
         `
     });
     left.appendChild(el(doc, 'div', {
-        style: 'font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:12px;'
+        style: 'font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:12px;'
     }, 'Problem'));
 
     // Fixes low-contrast sample test blocks: CF's own stylesheet gives these
@@ -287,17 +210,17 @@ export async function injectControlPanel({
         const sampleFixStyle = el(doc, 'style', { id: 'leetforces-sample-fix' });
         sampleFixStyle.textContent = `
             #leetforces-problem-pane .sample-test {
-                background: #0f172a !important;
-                border: 1px solid #1e293b !important;
-                border-radius: 8px !important;
+                background: var(--lf-background) !important;
+                border: 1px solid var(--lf-border) !important;
+                border-radius: var(--lf-radius-md) !important;
                 margin-bottom: 14px !important;
                 overflow: hidden !important;
             }
             #leetforces-problem-pane .sample-test .title,
             #leetforces-problem-pane .input .title,
             #leetforces-problem-pane .output .title {
-                background: #1e293b !important;
-                color: #94a3b8 !important;
+                background: var(--lf-surface-hover) !important;
+                color: var(--lf-muted-foreground) !important;
                 font-weight: 700 !important;
                 font-size: 12px !important;
                 text-transform: uppercase !important;
@@ -306,16 +229,16 @@ export async function injectControlPanel({
             }
             #leetforces-problem-pane .input,
             #leetforces-problem-pane .output {
-                background: #020617 !important;
+                background: var(--lf-background) !important;
             }
             #leetforces-problem-pane .input pre,
             #leetforces-problem-pane .output pre,
             #leetforces-problem-pane .sample-test pre,
             #leetforces-problem-pane .input .test-example-line,
             #leetforces-problem-pane .input div {
-                background: #020617 !important;
-                color: #e2e8f0 !important;
-                font-family: ui-monospace, "SFMono-Regular", Menlo, monospace !important;
+                background: var(--lf-background) !important;
+                color: var(--lf-foreground) !important;
+                font-family: var(--lf-font-mono) !important;
                 font-size: 13px !important;
                 padding: 2px 12px !important;
                 margin: 0 !important;
@@ -325,6 +248,34 @@ export async function injectControlPanel({
             #leetforces-problem-pane .input pre {
                 padding: 10px 12px !important;
             }
+
+            /* Problem statement typography: CF's cloned markup has no
+               consistent hierarchy on its own, so we impose one. */
+            #leetforces-problem-pane .problem-statement > .header { margin-bottom: 18px; }
+            #leetforces-problem-pane .problem-statement .title {
+                font-size: 19px; font-weight: 800; color: var(--lf-foreground);
+                margin-bottom: 10px;
+            }
+            #leetforces-problem-pane .problem-statement .time-limit,
+            #leetforces-problem-pane .problem-statement .memory-limit {
+                font-size: 12.5px; color: var(--lf-muted-foreground); margin: 2px 0;
+            }
+            #leetforces-problem-pane .problem-statement .section-title {
+                font-size: 14px; font-weight: 700; color: var(--lf-foreground);
+                margin: 20px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--lf-border);
+            }
+            #leetforces-problem-pane .problem-statement p { margin: 10px 0; }
+            #leetforces-problem-pane .problem-statement strong { color: var(--lf-foreground); }
+            #leetforces-problem-pane .problem-statement a { color: var(--lf-info, #60a5fa); }
+
+            /* Slim, dark scrollbars instead of the OS-default light ones. */
+            #leetforces-workspace ::-webkit-scrollbar { width: 10px; height: 10px; }
+            #leetforces-workspace ::-webkit-scrollbar-track { background: transparent; }
+            #leetforces-workspace ::-webkit-scrollbar-thumb {
+                background: var(--lf-border-strong); border-radius: 999px;
+                border: 2px solid transparent; background-clip: padding-box;
+            }
+            #leetforces-workspace ::-webkit-scrollbar-thumb:hover { background: var(--lf-muted-foreground); }
         `;
         const styleTarget = doc.head || doc.body || doc.documentElement;
         if (styleTarget && typeof styleTarget.appendChild === 'function') {
@@ -339,32 +290,34 @@ export async function injectControlPanel({
         if (clone.style) clone.style.cssText = 'position:static; width:auto; max-width:100%;';
         left.appendChild(clone);
     } else {
-        left.appendChild(el(doc, 'div', { style: 'color:#94a3b8;' },
+        left.appendChild(el(doc, 'div', { style: 'color:var(--lf-muted-foreground);' },
             'Problem statement could not be cloned. Use Classic CF to read it on the original page.'));
     }
 
     // Right: IDE
     const right = el(doc, 'div', {
-        style: 'flex:1 1 52%; min-width:320px; display:flex; flex-direction:column; min-height:0; background:#0b1120;'
+        style: 'flex:1 1 52%; min-width:320px; display:flex; flex-direction:column; min-height:0; background:var(--lf-background);'
     });
 
     const toolbar = el(doc, 'div', {
+        class: 'lf-toolbar',
         style: `
-            flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:8px;
-            padding:10px 12px; border-bottom:1px solid #1e293b; background:#0f172a;
+            flex:0 0 auto; flex-wrap:wrap;
+            padding:10px 12px; border-bottom:1px solid var(--lf-border); background:var(--lf-surface);
+            margin-bottom:0;
         `
     });
 
     const langSelect = el(doc, 'select', {
         id: 'leetforces-lang-select',
         class: 'lf-select',
-        style: 'flex:1 1 220px; min-width:180px;'
+        style: 'min-width:180px;'
     });
 
     const runBtn = el(doc, 'button', {
         id: 'leetforces-run-btn',
         type: 'button',
-        class: 'lf-btn'
+        class: 'lf-btn lf-btn-secondary'
     }, 'Run');
 
     const submitBtn = el(doc, 'button', {
@@ -382,8 +335,8 @@ export async function injectControlPanel({
         spellcheck: 'false',
         style: `
             flex:1 1 auto; min-height:220px; width:100%; resize:none; border:none;
-            padding:14px 16px; background:#020617; color:#e2e8f0;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            padding:14px 16px; background:var(--lf-background); color:var(--lf-foreground);
+            font-family: var(--lf-font-mono);
             font-size:13px; line-height:1.5; tab-size:4; white-space:pre; overflow:auto;
         `
     });
@@ -392,13 +345,13 @@ export async function injectControlPanel({
         id: 'leetforces-console',
         style: `
             flex:0 0 34%; min-height:140px; max-height:42%; overflow:auto;
-            border-top:1px solid #1e293b; background:#0f172a; padding:12px 14px;
+            border-top:1px solid var(--lf-border); background:var(--lf-surface); padding:12px 14px;
         `
     });
     consolePane.appendChild(el(doc, 'div', {
-        style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:6px;'
+        style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:6px;'
     }, 'Console'));
-    const runResultsEl = el(doc, 'div', { id: 'leetforces-run-results' });
+    const runResultsEl = el(doc, 'div', { id: 'leetforces-run-results', class: 'lf-results-stack' });
     const verdictEl = el(doc, 'div', { id: 'leetforces-verdict-panel' });
     consolePane.appendChild(runResultsEl);
     consolePane.appendChild(verdictEl);
@@ -523,11 +476,12 @@ export async function injectControlPanel({
         return code.replace(/\s+$/g, '');
     };
 
+    // Falls back to the real renderVerdictPanel (same function used by
+    // content.js in normal operation) rather than maintaining a second,
+    // separately-drifting copy of the same rendering logic.
     const showVerdict = (data) => {
-        if (typeof renderVerdict === 'function') {
-            try { renderVerdict(verdictEl, data); return; } catch (_) { /* fall through */ }
-        }
-        renderLocalVerdict(verdictEl, data);
+        const renderer = typeof renderVerdict === 'function' ? renderVerdict : renderVerdictPanel;
+        try { renderer(verdictEl, data); } catch (_) { /* ignore */ }
     };
 
     runBtn.addEventListener('click', async () => {
@@ -543,17 +497,16 @@ export async function injectControlPanel({
                 sampleTests: (context && context.sampleTests) || []
             });
             if (error) {
-                runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:13px;">${escapeHtml(error)}</div>`;
+                runResultsEl.innerHTML = buildInlineAlert('error', error);
             } else {
                 runResultsEl.innerHTML = `
-                    <div style="color:${overallPassed ? '#22c55e' : '#ef4444'}; font-weight:700; font-size:13px;">
-                        ${overallPassed ? `Accepted on all ${results.length} sample(s)` : 'Sample tests failed'}
-                    </div>
+                    ${buildInlineAlert(overallPassed ? 'success' : 'error',
+                        overallPassed ? `Accepted on all ${results.length} sample(s)` : 'Sample tests failed')}
                     ${buildTestResultsHtml(results)}
                 `;
             }
         } catch (err) {
-            runResultsEl.innerHTML = `<div style="color:#ef4444; font-size:13px;">${escapeHtml((err && err.message) || 'Run failed')}</div>`;
+            runResultsEl.innerHTML = buildInlineAlert('error', (err && err.message) || 'Run failed');
         } finally {
             runBtn.disabled = false;
             runBtn.textContent = 'Run';
@@ -577,12 +530,7 @@ export async function injectControlPanel({
 
             const result = await submitSolution(sourceCode, getSelectedLangTitle());
             if (!result || !result.success) {
-                showVerdict({
-                    statusKey: 'WRONG_ANSWER',
-                    formattedText: `Submission failed: ${(result && result.error) || 'unknown error'}`
-                });
-                // Override badge-ish styling for submit errors
-                verdictEl.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:4px 0;">Submission failed: ${escapeHtml((result && result.error) || 'unknown error')}</div>`;
+                verdictEl.innerHTML = buildInlineAlert('error', `Submission failed: ${(result && result.error) || 'unknown error'}`);
                 return;
             }
 
@@ -599,7 +547,7 @@ export async function injectControlPanel({
                 });
             }
         } catch (err) {
-            verdictEl.innerHTML = `<div style="color:#ef4444; font-size:13px; padding:4px 0;">${escapeHtml((err && err.message) || 'Submit failed')}</div>`;
+            verdictEl.innerHTML = buildInlineAlert('error', (err && err.message) || 'Submit failed');
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = 'Submit';

@@ -150,7 +150,7 @@ console.log('  [PASS] Verdict poller queries contest.status API anonymously.');
 // 7. Verify Prompt 7: Verdict UI Themes
 console.log('\nTest 8: Validating Verdict UI Themes & Color Coding...');
 const themeAccepted = getVerdictTheme('ACCEPTED');
-assert.strictEqual(themeAccepted.color, '#22c55e', 'Accepted should be green (#22c55e)');
+assert.strictEqual(themeAccepted.color, '#4ade80', 'Accepted should match theme.css --lf-success (#4ade80)');
 console.log('  [PASS] Verdict UI assigns distinct color themes.');
 
 // 8. Verify Local Judge0 Test Runner Module
