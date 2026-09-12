@@ -1987,15 +1987,12 @@ function el(doc, tag, attrs = {}, text) {
                 : Object.entries(value).map(([k, v]) => `${k.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}:${v}`).join(';');
             if (node.style) node.style.cssText = css;
             else node.style = { cssText: css };
-        } else if (key === 'id') {
-            node.id = value;
-            // node.attributes.id assignment removed (unsafe in real DOM)
-            if (typeof node.setAttribute === 'function') node.setAttribute('id', value);
         } else if (typeof node.setAttribute === 'function') {
             node.setAttribute(key, value);
+            if (key === 'id') node.id = value;
         } else {
+            // Fallback for non-DOM mock nodes (e.g. in tests) that have no setAttribute.
             node[key] = value;
-            // node.attributes[key] assignment removed (unsafe in real DOM)
         }
     }
     if (text !== undefined) node.textContent = text;
@@ -2164,6 +2161,50 @@ async function injectControlPanel({
     left.appendChild(el(doc, 'div', {
         style: 'font-size:12px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#64748b; margin-bottom:12px;'
     }, 'Problem'));
+
+    // Fixes low-contrast sample test blocks: CF's own stylesheet gives these
+    // a light background + dark text, which is nearly invisible once the
+    // panel's dark theme is applied. Scoped to #leetforces-problem-pane so
+    // it can't leak out and affect the rest of the Codeforces page.
+    if (!doc.getElementById('leetforces-sample-fix')) {
+        const sampleFixStyle = el(doc, 'style', { id: 'leetforces-sample-fix' });
+        sampleFixStyle.textContent = `
+            #leetforces-problem-pane .sample-test {
+                background: #0f172a !important;
+                border: 1px solid #1e293b !important;
+                border-radius: 8px !important;
+                margin-bottom: 14px !important;
+                overflow: hidden !important;
+            }
+            #leetforces-problem-pane .sample-test .title,
+            #leetforces-problem-pane .input .title,
+            #leetforces-problem-pane .output .title {
+                background: #1e293b !important;
+                color: #94a3b8 !important;
+                font-weight: 700 !important;
+                font-size: 12px !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.05em !important;
+                padding: 6px 10px !important;
+            }
+            #leetforces-problem-pane .input pre,
+            #leetforces-problem-pane .output pre,
+            #leetforces-problem-pane .sample-test pre {
+                background: #020617 !important;
+                color: #e2e8f0 !important;
+                font-family: ui-monospace, "SFMono-Regular", Menlo, monospace !important;
+                font-size: 13px !important;
+                padding: 10px 12px !important;
+                margin: 0 !important;
+                white-space: pre-wrap !important;
+                word-break: break-word !important;
+            }
+        `;
+        const styleTarget = doc.head || doc.body || doc.documentElement;
+        if (styleTarget && typeof styleTarget.appendChild === 'function') {
+            styleTarget.appendChild(sampleFixStyle);
+        }
+    }
 
     const statement = doc.querySelector && doc.querySelector('.problem-statement');
     if (statement && typeof statement.cloneNode === 'function') {
@@ -2446,8 +2487,7 @@ async function injectControlPanel({
         }
     });
 
-    // Return both the shell element and the editor textarea for external usage
-    return { shell, editor: codeEditor };
+    return shell;
 }
 
 /* --- src/content.js --- */
