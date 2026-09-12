@@ -197,22 +197,45 @@ export async function injectControlPanel({
     }, `\u2190 Back to ${isProblemsetPage ? 'problemset' : 'contest'}`);
     left.appendChild(backLink);
 
+    const statement = doc.querySelector && doc.querySelector('.problem-statement');
+
+    left.appendChild(el(doc, 'h1', {
+        style: 'font-size:22px; font-weight:800; color:var(--lf-foreground); margin:0 0 12px;'
+    }, context.problemName
+        ? `${context.problemIndex || ''}. ${context.problemName}`
+        : (context.problemKey || 'Problem')));
+
     const metaRow = el(doc, 'div', { style: 'display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:16px;' });
     let metaRowHasContent = false;
     if (context.rating != null) {
         const ratingColor = getRatingColor(context.rating);
         metaRow.appendChild(el(doc, 'span', {
             style: `
-                font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px;
-                background:${ratingColor}22; color:${ratingColor};
+                font-size:12px; font-weight:700; padding:5px 12px; border-radius:999px;
+                background:${ratingColor}; color:#0b0b0d;
             `
         }, `\u2605 ${context.rating}`));
+        metaRowHasContent = true;
+    }
+    // Real time/memory limits, pulled from CF's own statement markup.
+    const timeLimitText = statement ? (statement.querySelector('.time-limit') || {}).textContent : null;
+    const memoryLimitText = statement ? (statement.querySelector('.memory-limit') || {}).textContent : null;
+    if (timeLimitText || memoryLimitText) {
+        const limitParts = [timeLimitText, memoryLimitText]
+            .filter(Boolean)
+            .map(t => t.replace(/^(time limit per test:|memory limit per test:)\s*/i, '').trim());
+        metaRow.appendChild(el(doc, 'span', {
+            style: `
+                font-size:11.5px; font-weight:600; padding:5px 12px; border-radius:999px;
+                background:var(--lf-surface-hover); color:var(--lf-muted-foreground);
+            `
+        }, `\u23f1 ${limitParts.join(' \u00b7 ')}`));
         metaRowHasContent = true;
     }
     (context.tags || []).forEach(tag => {
         metaRow.appendChild(el(doc, 'span', {
             style: `
-                font-size:11px; font-weight:600; padding:3px 9px; border-radius:999px;
+                font-size:11px; font-weight:600; padding:5px 10px; border-radius:999px;
                 background:var(--lf-surface-hover); color:var(--lf-muted-foreground);
             `
         }, tag));
@@ -301,11 +324,14 @@ export async function injectControlPanel({
         }
     }
 
-    const statement = doc.querySelector && doc.querySelector('.problem-statement');
     if (statement && typeof statement.cloneNode === 'function') {
         const clone = statement.cloneNode(true);
         // neutralize CF absolute positioning quirks
         if (clone.style) clone.style.cssText = 'position:static; width:auto; max-width:100%;';
+        // Remove CF's native title + time/memory limit lines — we render
+        // our own equivalents above (heading + pills), so keeping these
+        // would just duplicate the same information.
+        clone.querySelectorAll('.header .title, .time-limit, .memory-limit').forEach(node => node.remove());
         // Remove CF's raw sample blocks — replaced below with custom
         // "Example N" cards (with copy buttons) built from already-
         // extracted sample data, rather than restyling CF's markup in place.
@@ -388,7 +414,7 @@ export async function injectControlPanel({
     const toolbar = el(doc, 'div', {
         class: 'lf-toolbar',
         style: `
-            flex:0 0 auto; flex-wrap:wrap;
+            display:flex; align-items:center; justify-content:space-between; gap:12px;
             padding:10px 12px; border-bottom:1px solid var(--lf-border); background:var(--lf-surface);
             margin-bottom:0;
         `
@@ -397,13 +423,14 @@ export async function injectControlPanel({
     const langSelect = el(doc, 'select', {
         id: 'leetforces-lang-select',
         class: 'lf-select',
-        style: 'min-width:180px;'
+        style: 'flex:0 1 220px; min-width:160px;'
     });
 
     const submitBtn = el(doc, 'button', {
         id: 'leetforces-submit-btn',
         type: 'button',
-        class: 'lf-btn lf-btn-primary'
+        class: 'lf-btn lf-btn-primary',
+        style: 'flex:0 0 auto; padding-left:24px; padding-right:24px;'
     }, 'Submit');
 
     toolbar.appendChild(langSelect);

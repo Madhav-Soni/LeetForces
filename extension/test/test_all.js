@@ -181,7 +181,10 @@ const langSelect = panel.querySelector('#leetforces-lang-select');
 assert.ok(langSelect, 'Panel should render #leetforces-lang-select dropdown element');
 
 const optionsList = langSelect.querySelectorAll('option');
-assert.strictEqual(optionsList.length, 3, 'Select should be populated with 3 options from mock formDetails');
+// Mock data has two C++ variants (G++17, G++20) which now correctly
+// collapse into one "latest" entry (G++20) via filterToLatestPerLanguage,
+// plus Python 3.8.10 — so 2 options, not the raw 3.
+assert.strictEqual(optionsList.length, 2, 'Select should collapse duplicate C++ versions, leaving 2 options (latest C++ + Python)');
 assert.strictEqual(langSelect.value, '89', 'GNU G++20 (value 89) should be pre-selected by default');
 
 // Simulate changing dropdown option to Python 3.8.10 (value 31)

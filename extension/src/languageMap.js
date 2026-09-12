@@ -80,6 +80,42 @@ export function getLanguageFamily(compilerIdOrTitle) {
 }
 
 /**
+ * Extracts a comparable version number from a CF compiler title, used to
+ * pick the "latest" variant within a language family (e.g. G++23 over
+ * G++17, Java 21 over Java 8).
+ * @param {string} title
+ * @returns {number}
+ */
+function extractVersionScore(title = '') {
+    const match = String(title).match(/\d+(\.\d+)*/);
+    const score = match ? parseFloat(match[0]) : 0;
+    // Slight tiebreaker: prefer explicit 64-bit builds when versions tie.
+    return score + (/64\s*bit/i.test(title) ? 0.001 : 0);
+}
+
+/**
+ * Collapses CF's full compiler list (often 30+ entries: every version of
+ * every language) down to one "latest" entry per language family, so the
+ * dropdown shows one modern C++, one modern Java, etc. instead of every
+ * historical version. Languages that don't map to a known family (rare,
+ * uncommon CF languages) are kept as-is rather than dropped.
+ * @param {Array<{ value: string, title: string, isSelected: boolean }>} availableLanguages
+ * @returns {Array<{ value: string, title: string, isSelected: boolean }>}
+ */
+export function filterToLatestPerLanguage(availableLanguages = []) {
+    const bestByFamily = new Map();
+    availableLanguages.forEach(lang => {
+        const family = getLanguageFamily(lang.title) || `__unmapped__:${lang.title}`;
+        const score = extractVersionScore(lang.title);
+        const existing = bestByFamily.get(family);
+        if (!existing || score > existing.score) {
+            bestByFamily.set(family, { lang, score });
+        }
+    });
+    return Array.from(bestByFamily.values()).map(entry => entry.lang);
+}
+
+/**
  * Resolves the best matching programTypeId from available form languages based on user preference.
  * @param {string} preferredLang - User's preferred language string (e.g. "GNU G++20", "Python 3", "Java 21", "89")
  * @param {Array<{ value: string, title: string, isSelected: boolean }>} availableLanguages - Extracted form languages
@@ -136,9 +172,14 @@ export function populateLanguageSelector(selectElement, availableLanguages = [],
     if (!doc) return;
 
     selectElement.innerHTML = '';
-    const resolvedId = resolveLanguageId(preferredLang, availableLanguages);
 
-    if (availableLanguages.length === 0) {
+    const filteredLanguages = availableLanguages.length > 0
+        ? filterToLatestPerLanguage(availableLanguages)
+        : availableLanguages;
+
+    const resolvedId = resolveLanguageId(preferredLang, filteredLanguages);
+
+    if (filteredLanguages.length === 0) {
         // Render from KNOWN_COMPILER_MAP if form options not available
         for (const [name, id] of Object.entries(KNOWN_COMPILER_MAP)) {
             const opt = doc.createElement('option');
@@ -150,7 +191,7 @@ export function populateLanguageSelector(selectElement, availableLanguages = [],
         return;
     }
 
-    availableLanguages.forEach(lang => {
+    filteredLanguages.forEach(lang => {
         const opt = doc.createElement('option');
         opt.value = lang.value;
         opt.textContent = lang.title;
