@@ -62,7 +62,7 @@ function safeSaveCode(problemKey, languageFamily, code) {
     if (!problemKey || typeof code !== 'string' || !code.trim()) return;
     try {
         const p = saveCode(problemKey, languageFamily, code);
-        if (p && typeof p.catch === 'function') p.catch(() => {});
+        if (p && typeof p.catch === 'function') p.catch(() => { });
     } catch (_) { /* ignore */ }
 }
 
@@ -142,9 +142,76 @@ export async function injectControlPanel({
             #leetforces-workspace pre, #leetforces-workspace .problem-statement {
                 white-space: pre-wrap; word-break: break-word;
             }
-            #leetforces-code-editor:focus { outline: 1px solid #38bdf8; outline-offset: -1px; }
-            #leetforces-run-btn:hover, #leetforces-submit-btn:hover { filter: brightness(1.08); }
-            #leetforces-run-btn:disabled, #leetforces-submit-btn:disabled { opacity: 0.65; cursor: wait; }
+            #leetforces-code-editor:focus { outline: 1px solid var(--lf-accent, #22c55e); outline-offset: -1px; }
+
+            /* --- Design tokens --- */
+            #leetforces-workspace {
+                --lf-bg: #0b1120;
+                --lf-surface: #0f172a;
+                --lf-surface-2: #111827;
+                --lf-border: #1e293b;
+                --lf-border-strong: #334155;
+                --lf-text: #e2e8f0;
+                --lf-text-muted: #94a3b8;
+                --lf-text-dim: #64748b;
+                --lf-accent: #22c55e;
+                --lf-accent-text: #052e16;
+                --lf-radius-sm: 6px;
+                --lf-radius-md: 8px;
+                --lf-space-1: 4px;
+                --lf-space-2: 8px;
+                --lf-space-3: 12px;
+                --lf-space-4: 16px;
+            }
+
+            /* --- Buttons --- */
+            #leetforces-workspace .lf-btn {
+                flex: 0 0 auto;
+                padding: 8px 14px;
+                border: 1px solid var(--lf-border-strong);
+                border-radius: var(--lf-radius-md);
+                background: var(--lf-surface-2);
+                color: var(--lf-text);
+                font-weight: 600;
+                font-size: 13px;
+                cursor: pointer;
+                transition: background-color 120ms ease, transform 120ms ease, opacity 120ms ease;
+            }
+            #leetforces-workspace .lf-btn:hover:not(:disabled) { background: var(--lf-border); }
+            #leetforces-workspace .lf-btn:active:not(:disabled) { transform: scale(0.98); }
+            #leetforces-workspace .lf-btn:disabled { opacity: 0.6; cursor: wait; transform: none; }
+            #leetforces-workspace .lf-btn:focus-visible {
+                outline: 2px solid var(--lf-accent); outline-offset: 1px;
+            }
+            #leetforces-workspace .lf-btn-primary {
+                background: var(--lf-accent);
+                border-color: var(--lf-accent);
+                color: var(--lf-accent-text);
+                font-weight: 700;
+            }
+            #leetforces-workspace .lf-btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+
+            /* --- Select --- */
+            #leetforces-workspace .lf-select {
+                border: 1px solid var(--lf-border-strong);
+                border-radius: var(--lf-radius-md);
+                background: var(--lf-surface-2);
+                color: var(--lf-text);
+                padding: 8px 10px;
+                font-size: 13px;
+            }
+            #leetforces-workspace .lf-select:focus-visible {
+                outline: 2px solid var(--lf-accent); outline-offset: 1px;
+            }
+
+            /* --- Subtle entrance for new verdicts/results, not a flashy animation --- */
+            #leetforces-workspace .lf-fade-in {
+                animation: lf-fade-in 150ms ease;
+            }
+            @keyframes lf-fade-in {
+                from { opacity: 0; transform: translateY(2px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
         `;
         (doc.head || body).appendChild(style);
     }
@@ -187,7 +254,7 @@ export async function injectControlPanel({
     const classicBtn = el(doc, 'button', {
         id: 'leetforces-classic-btn',
         type: 'button',
-        style: 'background:#1e293b; border:1px solid #334155; color:#cbd5e1; border-radius:8px; padding:7px 10px; font-size:12px; cursor:pointer;'
+        class: 'lf-btn'
     }, 'Classic CF');
     topRight.appendChild(classicBtn);
     top.appendChild(topLeft);
@@ -290,28 +357,20 @@ export async function injectControlPanel({
 
     const langSelect = el(doc, 'select', {
         id: 'leetforces-lang-select',
-        style: `
-            flex:1 1 220px; min-width:180px; background:#111827; border:1px solid #334155;
-            color:#e2e8f0; border-radius:8px; padding:8px 10px; font-size:13px;
-        `
+        class: 'lf-select',
+        style: 'flex:1 1 220px; min-width:180px;'
     });
 
     const runBtn = el(doc, 'button', {
         id: 'leetforces-run-btn',
         type: 'button',
-        style: `
-            flex:0 0 auto; padding:8px 14px; border:none; border-radius:8px;
-            background:#334155; color:#f8fafc; font-weight:700; font-size:13px; cursor:pointer;
-        `
+        class: 'lf-btn'
     }, 'Run');
 
     const submitBtn = el(doc, 'button', {
         id: 'leetforces-submit-btn',
         type: 'button',
-        style: `
-            flex:0 0 auto; padding:8px 16px; border:none; border-radius:8px;
-            background:#22c55e; color:#052e16; font-weight:800; font-size:13px; cursor:pointer;
-        `
+        class: 'lf-btn lf-btn-primary'
     }, 'Submit');
 
     toolbar.appendChild(langSelect);
@@ -457,10 +516,11 @@ export async function injectControlPanel({
         let code = '';
         try { code = String(codeEditor.value != null ? codeEditor.value : ''); } catch (_) { code = ''; }
         if (!code.trim()) {
-            code = DEFAULT_CPP_TEMPLATE;
+            const fallback = getBoilerplate(currentLanguageFamily || 'C++');
+            code = fallback ? fallback.code : '';
             try { codeEditor.value = code; } catch (_) { /* ignore */ }
         }
-        return code.replace(/\s+$/, '');
+        return code.replace(/\s+$/g, '');
     };
 
     const showVerdict = (data) => {
