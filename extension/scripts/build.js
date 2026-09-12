@@ -19,6 +19,7 @@ if (!fs.existsSync(distDir)) {
 // List of modules in dependency order
 const moduleFiles = [
     'src/constants.js',
+    'src/boilerplates.js',
     'src/contextExtractor.js',
     'src/formExtractor.js',
     'src/handleExtractor.js',
