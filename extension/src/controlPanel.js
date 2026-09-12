@@ -11,7 +11,7 @@
  * and .lf-* classes are available here without any injection.
  */
 
-import { runSampleTests } from './testRunner.js';
+
 import { populateLanguageSelector, getLanguageFamily } from './languageMap.js';
 import {
     getPreferredLanguage,
@@ -72,28 +72,7 @@ function safeSaveCode(problemKey, languageFamily, code) {
     } catch (_) { /* ignore */ }
 }
 
-/**
- * Renders sample test case results using theme.css's alert/badge classes
- * (same visual language as the real Codeforces verdict banner) so both
- * surfaces feel like one consistent system instead of two.
- */
-function buildTestResultsHtml(results) {
-    if (!results || results.length === 0) return '';
-    return results.map(r => {
-        const variant = r.passed ? 'success' : (r.status === 'SKIPPED' ? 'neutral' : 'error');
-        const label = r.passed ? 'PASS' : String(r.status || '').replace(/_/g, ' ');
-        const showDiff = !r.passed && r.status !== 'SKIPPED';
-        return `
-            <div class="lf-alert lf-alert-${variant}">
-                <div class="lf-alert-title">Case ${r.index}: ${escapeHtml(label)}</div>
-                ${showDiff ? `
-                    <div class="lf-alert-diff">Expected:\n${escapeHtml(r.expected)}</div>
-                    <div class="lf-alert-diff">Output:\n${escapeHtml(r.actual || r.stderr || '(empty)')}</div>
-                ` : ''}
-            </div>
-        `;
-    }).join('');
-}
+
 
 /** Wraps a one-line message in the same alert style as everything else. */
 function buildInlineAlert(variant, message) {
@@ -314,11 +293,8 @@ export async function injectControlPanel({
         style: 'min-width:180px;'
     });
 
-    const runBtn = el(doc, 'button', {
-        id: 'leetforces-run-btn',
-        type: 'button',
-        class: 'lf-btn lf-btn-secondary'
-    }, 'Run');
+    
+
 
     const submitBtn = el(doc, 'button', {
         id: 'leetforces-submit-btn',
@@ -327,7 +303,7 @@ export async function injectControlPanel({
     }, 'Submit');
 
     toolbar.appendChild(langSelect);
-    toolbar.appendChild(runBtn);
+    
     toolbar.appendChild(submitBtn);
 
     const codeEditor = el(doc, 'textarea', {
@@ -351,9 +327,9 @@ export async function injectControlPanel({
     consolePane.appendChild(el(doc, 'div', {
         style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:6px;'
     }, 'Console'));
-    const runResultsEl = el(doc, 'div', { id: 'leetforces-run-results', class: 'lf-results-stack' });
+    
     const verdictEl = el(doc, 'div', { id: 'leetforces-verdict-panel' });
-    consolePane.appendChild(runResultsEl);
+
     consolePane.appendChild(verdictEl);
 
     right.appendChild(toolbar);
@@ -484,39 +460,12 @@ export async function injectControlPanel({
         try { renderer(verdictEl, data); } catch (_) { /* ignore */ }
     };
 
-    runBtn.addEventListener('click', async () => {
-        runBtn.disabled = true;
-        runBtn.textContent = 'Running…';
-        runResultsEl.innerHTML = '';
-        verdictEl.innerHTML = '';
-        try {
-            const sourceCode = getSourceCode();
-            const { overallPassed, results, error } = await runSampleTests({
-                languageTitle: getSelectedLangTitle(),
-                sourceCode,
-                sampleTests: (context && context.sampleTests) || []
-            });
-            if (error) {
-                runResultsEl.innerHTML = buildInlineAlert('error', error);
-            } else {
-                runResultsEl.innerHTML = `
-                    ${buildInlineAlert(overallPassed ? 'success' : 'error',
-                        overallPassed ? `Accepted on all ${results.length} sample(s)` : 'Sample tests failed')}
-                    ${buildTestResultsHtml(results)}
-                `;
-            }
-        } catch (err) {
-            runResultsEl.innerHTML = buildInlineAlert('error', (err && err.message) || 'Run failed');
-        } finally {
-            runBtn.disabled = false;
-            runBtn.textContent = 'Run';
-        }
-    });
+    
 
     submitBtn.addEventListener('click', async () => {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Submitting…';
-        runResultsEl.innerHTML = '';
+        
         verdictEl.innerHTML = '';
         try {
             const sourceCode = getSourceCode();

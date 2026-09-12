@@ -14,8 +14,7 @@
   ],
   "host_permissions": [
     "https://codeforces.com/*",
-    "https://*.codeforces.com/*",
-    "https://judge0-ce.p.rapidapi.com/*"
+    "https://*.codeforces.com/*"
   ],
   "content_scripts": [
     {

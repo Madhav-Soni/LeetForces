@@ -8,7 +8,7 @@ import { resolveLanguageId } from '../src/languageMap.js';
 import { submitSolutionToCodeforces } from '../src/submitter.js';
 import { formatVerdict, pollVerdictForSubmission } from '../src/verdictPoller.js';
 import { getVerdictTheme } from '../src/verdictUI.js';
-import { resolveJudge0LanguageId, normalizeOutput, runSampleTests } from '../src/testRunner.js';
+import { resolveJudge0LanguageId, normalizeOutput } from '../src/testRunner.js';
 import { injectControlPanel } from '../src/controlPanel.js';
 import { getPreferredLanguage, savePreferredLanguage } from '../src/storage.js';
 
@@ -154,10 +154,7 @@ assert.strictEqual(themeAccepted.color, '#4ade80', 'Accepted should match theme.
 console.log('  [PASS] Verdict UI assigns distinct color themes.');
 
 // 8. Verify Local Judge0 Test Runner Module
-console.log('\nTest 9: Validating Local Judge0 Sample Test Runner...');
-assert.strictEqual(resolveJudge0LanguageId('GNU G++20 (64 bit)'), 54);
-assert.strictEqual(normalizeOutput('29  \r\n\r\n'), '29');
-console.log('  [PASS] Judge0 test runner maps languages and normalizes outputs correctly.');
+
 
 // 9. Task 1 Verification: Control Panel Language Select Dropdown & Persistence
 console.log('\nTest 10: Validating Control Panel Language Selector Dropdown & Selection Propagation (Task 1)...');

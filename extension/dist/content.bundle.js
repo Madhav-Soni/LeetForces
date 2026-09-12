@@ -1928,25 +1928,6 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
 
     const theme = getVerdictTheme(statusKey);
     const memoryMb = (memoryBytes / (1024 * 1024)).toFixed(1);
-    
-    const colors = {
-        success: '#4ade80',
-        error: '#f87171',
-        warning: '#fbbf24',
-        neutral: '#a1a1aa',
-        info: '#60a5fa'
-    };
-    const bgColors = {
-        success: 'rgba(74, 222, 128, 0.10)',
-        error: 'rgba(248, 113, 113, 0.10)',
-        warning: 'rgba(251, 191, 36, 0.10)',
-        neutral: 'rgba(161, 161, 170, 0.10)',
-        info: 'rgba(96, 165, 250, 0.10)'
-    };
-    const color = colors[theme.variant] || colors.neutral;
-    const bgColor = bgColors[theme.variant] || bgColors.neutral;
-    
-    const iconStyle = theme.isPending ? 'animation: lfPulse 1.2s infinite ease-in-out;' : '';
 
     const metaParts = [];
     if (submissionId) metaParts.push(`ID <strong>${escapeHtml(String(submissionId))}</strong>`);
@@ -1954,24 +1935,17 @@ function renderVerdictPanel(containerEl, verdictData = {}) {
     if (memoryBytes > 0) metaParts.push(`<strong>${memoryMb} MB</strong>`);
     if (theme.isPending) metaParts.push('Updating in real time…');
 
+    const iconClass = theme.isPending ? 'lf-icon-pulse' : '';
+
+    containerEl.className = `lf-alert lf-alert-${theme.variant}`;
     containerEl.innerHTML = `
-        <style>
-            @keyframes lfPulse {
-                0% { transform: scale(1); opacity: 1; }
-                50% { transform: scale(1.15); opacity: 0.7; }
-                100% { transform: scale(1); opacity: 1; }
-            }
-        </style>
-        <div style="display:flex; flex-direction:column; gap:4px; padding:12px; border-radius:8px; border-left:3px solid ${color}; background:${bgColor}; font-size:13px; margin-top:8px;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:600;">
-                <span><span style="${iconStyle}">${theme.icon}</span> ${escapeHtml(formattedText)}</span>
-                <span style="display:inline-flex; align-items:center; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:${bgColor}; color:${color};">${escapeHtml(theme.badgeLabel)}</span>
-            </div>
-            ${metaParts.length > 0 ? `<div style="display:flex; gap:16px; font-size:12px; color:#a1a1aa; margin-top:4px;">${metaParts.map(p => `<span>${p}</span>`).join('')}</div>` : ''}
+        <div class="lf-alert-title">
+            <span><span class="${iconClass}">${theme.icon}</span> ${escapeHtml(formattedText)}</span>
+            <span class="lf-badge lf-badge-${theme.variant}">${escapeHtml(theme.badgeLabel)}</span>
         </div>
+        ${metaParts.length > 0 ? `<div class="lf-alert-meta">${metaParts.map(p => `<span>${p}</span>`).join('')}</div>` : ''}
     `;
 }
-
 
 /* --- src/controlPanel.js --- */
 /**
@@ -2048,7 +2022,7 @@ function safeSaveCode(problemKey, languageFamily, code) {
  * (same visual language as the real Codeforces verdict banner) so both
  * surfaces feel like one consistent system instead of two.
  */
-function buildTestResultsHtml(results) {
+
     if (!results || results.length === 0) return '';
     return results.map(r => {
         const variant = r.passed ? 'success' : (r.status === 'SKIPPED' ? 'neutral' : 'error');
@@ -2117,10 +2091,12 @@ async function injectControlPanel({
         `
     });
 
-    // Also expose legacy panel id on inner shell for tests
+    // Also expose legacy panel id on inner shell for tests. theme.css has a
+    // #leetforces-control-panel rule (border + border-radius) meant for an
+    // embedded panel, not this fullscreen overlay — explicitly override it.
     const shell = el(doc, 'div', {
         id: PANEL_ID,
-        style: 'display:flex; flex-direction:column; height:100%; min-height:0;'
+        style: 'display:flex; flex-direction:column; height:100%; min-height:0; border:none; border-radius:0; background:transparent;'
     });
 
     // Top bar
@@ -2283,11 +2259,8 @@ async function injectControlPanel({
         style: 'min-width:180px;'
     });
 
-    const runBtn = el(doc, 'button', {
-        id: 'leetforces-run-btn',
-        type: 'button',
-        class: 'lf-btn lf-btn-secondary'
-    }, 'Run');
+    
+
 
     const submitBtn = el(doc, 'button', {
         id: 'leetforces-submit-btn',
@@ -2296,7 +2269,7 @@ async function injectControlPanel({
     }, 'Submit');
 
     toolbar.appendChild(langSelect);
-    toolbar.appendChild(runBtn);
+    
     toolbar.appendChild(submitBtn);
 
     const codeEditor = el(doc, 'textarea', {
@@ -2320,9 +2293,9 @@ async function injectControlPanel({
     consolePane.appendChild(el(doc, 'div', {
         style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:6px;'
     }, 'Console'));
-    const runResultsEl = el(doc, 'div', { id: 'leetforces-run-results', class: 'lf-results-stack' });
+    
     const verdictEl = el(doc, 'div', { id: 'leetforces-verdict-panel' });
-    consolePane.appendChild(runResultsEl);
+
     consolePane.appendChild(verdictEl);
 
     right.appendChild(toolbar);
@@ -2453,39 +2426,12 @@ async function injectControlPanel({
         try { renderer(verdictEl, data); } catch (_) { /* ignore */ }
     };
 
-    runBtn.addEventListener('click', async () => {
-        runBtn.disabled = true;
-        runBtn.textContent = 'Running…';
-        runResultsEl.innerHTML = '';
-        verdictEl.innerHTML = '';
-        try {
-            const sourceCode = getSourceCode();
-            const { overallPassed, results, error } = await runSampleTests({
-                languageTitle: getSelectedLangTitle(),
-                sourceCode,
-                sampleTests: (context && context.sampleTests) || []
-            });
-            if (error) {
-                runResultsEl.innerHTML = buildInlineAlert('error', error);
-            } else {
-                runResultsEl.innerHTML = `
-                    ${buildInlineAlert(overallPassed ? 'success' : 'error',
-                        overallPassed ? `Accepted on all ${results.length} sample(s)` : 'Sample tests failed')}
-                    ${buildTestResultsHtml(results)}
-                `;
-            }
-        } catch (err) {
-            runResultsEl.innerHTML = buildInlineAlert('error', (err && err.message) || 'Run failed');
-        } finally {
-            runBtn.disabled = false;
-            runBtn.textContent = 'Run';
-        }
-    });
+    
 
     submitBtn.addEventListener('click', async () => {
         submitBtn.disabled = true;
         submitBtn.textContent = 'Submitting…';
-        runResultsEl.innerHTML = '';
+        
         verdictEl.innerHTML = '';
         try {
             const sourceCode = getSourceCode();
