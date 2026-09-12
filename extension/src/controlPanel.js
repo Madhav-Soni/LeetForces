@@ -39,13 +39,13 @@ function el(doc, tag, attrs = {}, text) {
             else node.style = { cssText: css };
         } else if (key === 'id') {
             node.id = value;
-            if (node.attributes) node.attributes.id = value;
+            // node.attributes.id assignment removed (unsafe in real DOM)
             if (typeof node.setAttribute === 'function') node.setAttribute('id', value);
         } else if (typeof node.setAttribute === 'function') {
             node.setAttribute(key, value);
         } else {
             node[key] = value;
-            if (node.attributes) node.attributes[key] = value;
+            // node.attributes[key] assignment removed (unsafe in real DOM)
         }
     }
     if (text !== undefined) node.textContent = text;
