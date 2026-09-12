@@ -237,17 +237,26 @@ export async function injectControlPanel({
                 letter-spacing: 0.05em !important;
                 padding: 6px 10px !important;
             }
+            #leetforces-problem-pane .input,
+            #leetforces-problem-pane .output {
+                background: #020617 !important;
+            }
             #leetforces-problem-pane .input pre,
             #leetforces-problem-pane .output pre,
-            #leetforces-problem-pane .sample-test pre {
+            #leetforces-problem-pane .sample-test pre,
+            #leetforces-problem-pane .input .test-example-line,
+            #leetforces-problem-pane .input div {
                 background: #020617 !important;
                 color: #e2e8f0 !important;
                 font-family: ui-monospace, "SFMono-Regular", Menlo, monospace !important;
                 font-size: 13px !important;
-                padding: 10px 12px !important;
+                padding: 2px 12px !important;
                 margin: 0 !important;
                 white-space: pre-wrap !important;
                 word-break: break-word !important;
+            }
+            #leetforces-problem-pane .input pre {
+                padding: 10px 12px !important;
             }
         `;
         const styleTarget = doc.head || doc.body || doc.documentElement;
