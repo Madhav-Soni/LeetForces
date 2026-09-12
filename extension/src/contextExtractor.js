@@ -22,6 +22,51 @@ export function extractPreText(preElement) {
 }
 
 /**
+ * Extracts problem tags and difficulty rating from CF's sidebar tag-box.
+ * These live outside .problem-statement, in a separate sidebar element, so
+ * they need their own extraction pass. Codeforces represents the numeric
+ * difficulty as a tag matching "*1500" — that one is split out as `rating`
+ * rather than left in the general tags list.
+ * @param {Document} doc
+ * @returns {{ tags: string[], rating: number|null }}
+ */
+export function extractTagsAndRating(doc = document) {
+    const tags = [];
+    let rating = null;
+
+    const tagNodes = doc.querySelectorAll('.tag-box');
+    tagNodes.forEach(node => {
+        const text = (node.textContent || '').trim();
+        if (!text) return;
+        const ratingMatch = text.match(/^\*(\d+)$/);
+        if (ratingMatch) {
+            rating = parseInt(ratingMatch[1], 10);
+        } else {
+            tags.push(text);
+        }
+    });
+
+    return { tags, rating };
+}
+
+/**
+ * Maps a Codeforces difficulty rating to its real color band.
+ * Matches CF's own handle/rating color conventions.
+ * @param {number|null} rating
+ * @returns {string} hex color
+ */
+export function getRatingColor(rating) {
+    if (rating == null) return '#a1a1aa';       // unrated: neutral gray
+    if (rating < 1200) return '#a1a1aa';         // gray
+    if (rating < 1400) return '#4ade80';         // green
+    if (rating < 1600) return '#22d3ee';         // cyan
+    if (rating < 1900) return '#60a5fa';         // blue
+    if (rating < 2100) return '#c084fc';         // purple
+    if (rating < 2400) return '#fb923c';         // orange
+    return '#f87171';                             // red
+}
+
+/**
  * Extracts problem context details from page URL and DOM.
  * @param {Document} doc - Document object (defaults to window.document)
  * @param {string} currentUrl - URL string (defaults to window.location.href)
@@ -30,7 +75,9 @@ export function extractPreText(preElement) {
  *   problemIndex: string|null,
  *   problemName: string|null,
  *   problemKey: string|null,
- *   sampleTests: Array<{ input: string, output: string }>
+ *   sampleTests: Array<{ input: string, output: string }>,
+ *   tags: string[],
+ *   rating: number|null
  * }}
  */
 export function extractProblemContext(doc = document, currentUrl = window.location.href) {
@@ -114,11 +161,16 @@ export function extractProblemContext(doc = document, currentUrl = window.locati
         problemKey = `cf_name_${problemName.replace(/\s+/g, '_').toLowerCase()}`;
     }
 
+    // 5. Tags and difficulty rating (sidebar, outside .problem-statement)
+    const { tags, rating } = extractTagsAndRating(doc);
+
     return {
         contestId,
         problemIndex,
         problemName: problemName || 'Unknown Problem',
         problemKey,
-        sampleTests
+        sampleTests,
+        tags,
+        rating
     };
 }
