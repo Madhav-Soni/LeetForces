@@ -496,5 +496,6 @@ export async function injectControlPanel({
         }
     });
 
-    return shell;
+    // Return both the shell element and the editor textarea for external usage
+    return { shell, editor: codeEditor };
 }

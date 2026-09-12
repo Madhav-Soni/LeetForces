@@ -62,49 +62,24 @@ export async function initLeetForcesPage(doc = document) {
             const handle = extractLoggedInHandle(doc);
             console.log('[LeetForces] Extracted handle:', handle);
 
-            // Detect the actual editor on the page with retry logic
-            let editor = detectEditor(doc);
-            let retries = 0;
-            const maxRetries = 10;
-            
-            while ((!editor || !editor.instance) && retries < maxRetries) {
-                console.log(`[LeetForces] Editor detection retry ${retries + 1}/${maxRetries}...`);
-                // Debug: log what textareas exist
-                const allTextareas = doc.querySelectorAll('textarea');
-                console.log(`[LeetForces] Found ${allTextareas.length} textarea(s) on page`);
-                allTextareas.forEach((ta, i) => {
-                    console.log(`[LeetForces] Textarea ${i}: name="${ta.name}", id="${ta.id}", class="${ta.className}"`);
-                });
-                await new Promise(r => setTimeout(r, 100));
-                editor = detectEditor(doc);
-                retries++;
-            }
-            
-            console.log('[LeetForces] Detected editor:', editor.type, 'instance:', !!editor.instance);
+            // Detect native editor (no retries)
+            const detected = detectEditor(doc);
+            console.log(`[LeetForces] Native editor detected: ${detected.type}`);
 
-            // Initialize the editor with template/saved code
-            if (editor && editor.instance) {
-                await initializeProblemEditor(context.problemKey, editor);
-                console.log('[LeetForces] Editor initialized with template/saved code');
-            } else {
-                console.warn('[LeetForces] Editor detection failed or no instance available after retries');
-            }
-
-            injectControlPanel({
+            const { editor } = injectControlPanel({
                 doc,
-                editor,
+                editor: detected,
                 context,
                 formDetails,
                 handle,
                 submitSolution: submitHandler,
-                pollVerdict: (opts) => pollVerdictForSubmission({
-                    ...opts,
-                    contestId: context.contestId,
-                    problemIndex: context.problemIndex
-                }),
+                pollVerdict: (opts) => pollVerdictForSubmission({ ...opts, contestId: context.contestId, problemIndex: context.problemIndex }),
                 renderVerdict: renderVerdictPanel
             });
-            console.log('[LeetForces] Control panel injected.');
+
+            console.log(`[LeetForces] Using ${detected.type !== 'unknown' ? detected.type : 'built-in'} editor.`);
+            const result = await initializeProblemEditor(context.problemKey, editor);
+            console.log(`[LeetForces] Editor initialized for problem '${context.problemKey}'. New problem: ${result.isNewProblem}`);
         } else {
             console.warn('[LeetForces] No problemKey extracted; panel not injected.');
         }
