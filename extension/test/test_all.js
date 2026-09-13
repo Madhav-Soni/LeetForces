@@ -187,8 +187,12 @@ const optionsList = langSelect.querySelectorAll('option');
 assert.strictEqual(optionsList.length, 2, 'Select should collapse duplicate C++ versions, leaving 2 options (latest C++ + Python)');
 assert.strictEqual(langSelect.value, '89', 'GNU G++20 (value 89) should be pre-selected by default');
 
-// Simulate changing dropdown option to Python 3.8.10 (value 31)
-langSelect.selectedIndex = 2; // Python 3.8.10
+// Simulate changing dropdown option to Python 3.8.10 (value 31) — find it
+// by value rather than a hardcoded index, since the exact option count/
+// order depends on filterToLatestPerLanguage's deduplication.
+const pythonIndex = Array.from(optionsList).findIndex(o => o.value === '31');
+assert.notStrictEqual(pythonIndex, -1, 'Python 3.8.10 option should exist in the dropdown');
+langSelect.selectedIndex = pythonIndex;
 langSelect.dispatchEvent(new Event('change'));
 
 const submitBtn = panel.querySelector('#leetforces-submit-btn');

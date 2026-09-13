@@ -1,9 +1,15 @@
 /**
- * Zero-dependency ES Module Bundler for LeetForces Chrome Extension
- * Concatenates and converts src/*.js modules into a single bundled content script dist/content.bundle.js
+ * esbuild-based bundler for LeetForces Chrome Extension.
+ *
+ * Replaces the old hand-written string-concatenation bundler, which
+ * worked only for our own files and broke on real npm packages (like
+ * CodeMirror) and on anything containing the literal text "import"/
+ * "export" inside a string or template literal (it used regex to strip
+ * those lines, not a real parser). esbuild actually parses the code, so
+ * neither problem exists here.
  */
 
-import fs from 'fs';
+import * as esbuild from 'esbuild';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -11,52 +17,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 
-const distDir = path.join(projectRoot, 'dist');
-if (!fs.existsSync(distDir)) {
-    fs.mkdirSync(distDir, { recursive: true });
+async function build() {
+    const result = await esbuild.build({
+        entryPoints: [path.join(projectRoot, 'src/content.js')],
+        bundle: true,
+        outfile: path.join(projectRoot, 'dist/content.bundle.js'),
+        format: 'iife',
+        platform: 'browser',
+        target: ['chrome100'],
+        minify: true,
+        sourcemap: false,
+        logLevel: 'info'
+    });
+
+    console.log('[Build] esbuild bundle complete.');
+    return result;
 }
 
-// List of modules in dependency order
-const moduleFiles = [
-    'src/constants.js',
-    'src/boilerplates.js',
-    'src/contextExtractor.js',
-    'src/formExtractor.js',
-    'src/handleExtractor.js',
-    'src/storage.js',
-    'src/editorManager.js',
-    'src/languageMap.js',
-    'src/submitter.js',
-    'src/testRunner.js',
-    'src/verdictPoller.js',
-    'src/verdictUI.js',
-    'src/controlPanel.js',
-    'src/content.js'
-];
-
-// pageBridge.js is NOT bundled - it runs in MAIN world and is loaded via manifest.json
-
-let bundleContent = `/**
- * LeetForces Extension Bundled Content Script
- * Generated automatically by scripts/build.js
- */
-(function() {
-    'use strict';
-`;
-
-for (const relPath of moduleFiles) {
-    const fullPath = path.join(projectRoot, relPath);
-    if (fs.existsSync(fullPath)) {
-        let fileText = fs.readFileSync(fullPath, 'utf8');
-        // Strip import and export keywords for IIFE concatenation
-        fileText = fileText.replace(/^import\s+[\s\S]*?;/gm, '');
-        fileText = fileText.replace(/^export\s+(default\s+)?/gm, '');
-        bundleContent += `\n/* --- ${relPath} --- */\n` + fileText + '\n';
-    }
-}
-
-bundleContent += `\n})();\n`;
-
-const outputPath = path.join(distDir, 'content.bundle.js');
-fs.writeFileSync(outputPath, bundleContent, 'utf8');
-console.log(`[Build] Successfully generated bundle at ${outputPath} (${(bundleContent.length / 1024).toFixed(2)} KB)`);
+build().catch(err => {
+    console.error('[Build] Failed:', err);
+    process.exit(1);
+});

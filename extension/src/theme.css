@@ -20,9 +20,9 @@
     --lf-foreground: #f4f4f5;       /* primary text */
 
     /* --- Accent (restrained, used only for the primary action) --- */
-    --lf-accent: #6366f1;
-    --lf-accent-hover: #7477f3;
-    --lf-accent-foreground: #f5f5ff;
+    --lf-accent: #f97316;
+    --lf-accent-hover: #fb8b3d;
+    --lf-accent-foreground: #1c0a00;
 
     /* --- Semantic verdict colors (text tone + soft background tint) --- */
     --lf-success: #4ade80;

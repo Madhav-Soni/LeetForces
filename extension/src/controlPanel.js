@@ -19,9 +19,9 @@ import {
     saveCode
 } from './storage.js';
 import { getBoilerplate } from './boilerplates.js';
-import { computeCursorOffset, offsetToLineCol } from './editorManager.js';
 import { getVerdictTheme, renderVerdictPanel } from './verdictUI.js';
 import { getRatingColor } from './contextExtractor.js';
+import { createCodeMirrorEditor } from './codeMirrorEditor.js';
 
 const WORKSPACE_ID = 'leetforces-workspace';
 const PANEL_ID = 'leetforces-control-panel'; // kept for tests / legacy queries
@@ -53,15 +53,6 @@ function el(doc, tag, attrs = {}, text) {
     }
     if (text !== undefined) node.textContent = text;
     return node;
-}
-
-function placeCursorInTextarea(textarea, line, col) {
-    try {
-        if (!textarea || typeof textarea.setSelectionRange !== 'function') return;
-        const offset = computeCursorOffset(String(textarea.value || ''), line, col);
-        if (typeof textarea.focus === 'function') textarea.focus();
-        textarea.setSelectionRange(offset, offset);
-    } catch (_) { /* ignore */ }
 }
 
 function safeSaveCode(problemKey, languageFamily, code) {
@@ -414,7 +405,7 @@ export async function injectControlPanel({
     const toolbar = el(doc, 'div', {
         class: 'lf-toolbar',
         style: `
-            display:flex; align-items:center; justify-content:space-between; gap:12px;
+            flex:0 0 auto; flex-wrap:wrap;
             padding:10px 12px; border-bottom:1px solid var(--lf-border); background:var(--lf-surface);
             margin-bottom:0;
         `
@@ -436,16 +427,12 @@ export async function injectControlPanel({
     toolbar.appendChild(langSelect);
     toolbar.appendChild(submitBtn);
 
-    const codeEditor = el(doc, 'textarea', {
+    const codeEditorMount = el(doc, 'div', {
         id: 'leetforces-code-editor',
-        spellcheck: 'false',
-        style: `
-            flex:1 1 auto; min-height:220px; width:100%; resize:none; border:none;
-            padding:14px 16px; background:var(--lf-background); color:var(--lf-foreground);
-            font-family: var(--lf-font-mono);
-            font-size:13px; line-height:1.5; tab-size:4; white-space:pre; overflow:auto;
-        `
+        style: 'flex:1 1 auto; min-height:220px; width:100%; overflow:hidden; display:flex;'
     });
+    // Actual CodeMirror instance is created just below, after boilerplate
+    // resolution, since it needs initial content + a language up front.
 
     const consolePane = el(doc, 'div', {
         id: 'leetforces-console',
@@ -461,7 +448,7 @@ export async function injectControlPanel({
     consolePane.appendChild(verdictEl);
 
     right.appendChild(toolbar);
-    right.appendChild(codeEditor);
+    right.appendChild(codeEditorMount);
     right.appendChild(consolePane);
 
     main.appendChild(left);
@@ -487,71 +474,66 @@ export async function injectControlPanel({
 
     const problemKey = context.problemKey || '';
 
-    // Loads saved code for the currently selected language, or falls back
-    // to that language's boilerplate. Shared by initial load and every
-    // subsequent language switch so there's one source of truth.
-    const loadCodeForCurrentLanguage = async () => {
+    /** Resolves the code + language family that should be loaded right now. */
+    const resolveCodeForCurrentLanguage = async () => {
         const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
         const langTitle = (opt && opt.text) || DEFAULT_LANG;
         const languageFamily = getLanguageFamily(langTitle) || 'C++';
 
-        let codeToApply = '';
+        let code = '';
         try {
             if (problemKey) {
                 const saved = await getSavedCode(problemKey, languageFamily);
-                if (typeof saved === 'string' && saved.trim()) codeToApply = saved;
+                if (typeof saved === 'string' && saved.trim()) code = saved;
             }
         } catch (_) { /* ignore */ }
 
         let usedBoilerplate = false;
-        if (!codeToApply) {
+        if (!code) {
             const boilerplate = getBoilerplate(languageFamily);
-            codeToApply = boilerplate ? boilerplate.code : '';
+            code = boilerplate ? boilerplate.code : '';
             usedBoilerplate = true;
-            if (problemKey) safeSaveCode(problemKey, languageFamily, codeToApply);
+            if (problemKey) safeSaveCode(problemKey, languageFamily, code);
         }
 
-        codeEditor.value = codeToApply;
-
-        if (usedBoilerplate) {
-            const boilerplate = getBoilerplate(languageFamily);
-            if (boilerplate) {
-                const { line, col } = offsetToLineCol(boilerplate.code, boilerplate.cursorOffset);
-                setTimeout(() => placeCursorInTextarea(codeEditor, line, col), 40);
-            }
-        }
-
-        return languageFamily;
+        return { languageFamily, code, usedBoilerplate };
     };
 
-    let currentLanguageFamily = await loadCodeForCurrentLanguage();
+    // Resolve the initial language + code BEFORE creating the editor,
+    // since CodeMirror needs both up front.
+    const initial = await resolveCodeForCurrentLanguage();
+    let currentLanguageFamily = initial.languageFamily;
+
+    const cmEditor = createCodeMirrorEditor(doc, codeEditorMount, initial.code, initial.languageFamily);
+    if (initial.usedBoilerplate) {
+        const boilerplate = getBoilerplate(initial.languageFamily);
+        if (boilerplate) setTimeout(() => cmEditor.setCursorOffset(boilerplate.cursorOffset), 40);
+    }
 
     langSelect.addEventListener('change', async () => {
         try {
             const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
             if (opt && opt.text) savePreferredLanguage(opt.text);
         } catch (_) { /* ignore */ }
-        currentLanguageFamily = await loadCodeForCurrentLanguage();
+
+        const resolved = await resolveCodeForCurrentLanguage();
+        currentLanguageFamily = resolved.languageFamily;
+        cmEditor.setLanguage(resolved.languageFamily);
+        cmEditor.setValue(resolved.code);
+        if (resolved.usedBoilerplate) {
+            const boilerplate = getBoilerplate(resolved.languageFamily);
+            if (boilerplate) setTimeout(() => cmEditor.setCursorOffset(boilerplate.cursorOffset), 40);
+        }
     });
 
     let saveTimer = null;
-    const persistCode = () => safeSaveCode(problemKey, currentLanguageFamily, String(codeEditor.value || ''));
-    codeEditor.addEventListener('input', () => {
+    const persistCode = () => safeSaveCode(problemKey, currentLanguageFamily, String(cmEditor.getValue() || ''));
+    cmEditor.onChange(() => {
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = setTimeout(persistCode, 300);
     });
-    codeEditor.addEventListener('keydown', (e) => {
-        if (!e || e.key !== 'Tab') return;
-        e.preventDefault();
-        try {
-            const start = codeEditor.selectionStart != null ? codeEditor.selectionStart : String(codeEditor.value || '').length;
-            const end = codeEditor.selectionEnd != null ? codeEditor.selectionEnd : start;
-            const value = String(codeEditor.value || '');
-            codeEditor.value = `${value.slice(0, start)}    ${value.slice(end)}`;
-            codeEditor.selectionStart = codeEditor.selectionEnd = start + 4;
-            persistCode();
-        } catch (_) { /* ignore */ }
-    });
+    // Tab-key indentation is handled natively by CodeMirror's own keymap
+    // (see codeMirrorEditor.js) — no manual textarea-style handler needed.
 
     classicBtn.addEventListener('click', () => {
         try {
@@ -571,11 +553,11 @@ export async function injectControlPanel({
 
     const getSourceCode = () => {
         let code = '';
-        try { code = String(codeEditor.value != null ? codeEditor.value : ''); } catch (_) { code = ''; }
+        try { code = String(cmEditor.getValue() || ''); } catch (_) { code = ''; }
         if (!code.trim()) {
             const fallback = getBoilerplate(currentLanguageFamily || 'C++');
             code = fallback ? fallback.code : '';
-            try { codeEditor.value = code; } catch (_) { /* ignore */ }
+            try { cmEditor.setValue(code); } catch (_) { /* ignore */ }
         }
         return code.replace(/\s+$/g, '');
     };
