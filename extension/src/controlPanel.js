@@ -131,17 +131,19 @@ export async function injectControlPanel({
             margin-bottom:0; border-radius:0;
         `
     });
-    const topLeft = el(doc, 'div', { class: 'lf-header-title', style: 'min-width:0;' });
+    const topLeft = el(doc, 'div', { class: 'lf-header-title', style: 'min-width:0; display:flex; align-items:center; gap:8px;' });
+    const logoMark = el(doc, 'span', {
+        style: `
+            display:inline-flex; align-items:center; justify-content:center;
+            width:22px; height:22px; border-radius:6px; flex:0 0 auto;
+            background:var(--lf-foreground); color:var(--lf-background);
+            font-weight:800; font-size:13px; font-family:var(--lf-font-mono);
+        `
+    }, 'C');
+    topLeft.appendChild(logoMark);
     topLeft.appendChild(el(doc, 'span', {
         style: 'font-weight:800; font-size:15px; color:var(--lf-foreground); letter-spacing:0.02em;'
     }, 'Codeforces'));
-    topLeft.appendChild(el(doc, 'span', {
-        style: `
-            font-size:10.5px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;
-            color:var(--lf-muted-foreground); background:var(--lf-surface-hover);
-            padding:2px 7px; border-radius:999px;
-        `
-    }, 'Enhanced View'));
     topLeft.appendChild(el(doc, 'span', {
         class: 'lf-problem-key',
         style: 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'
@@ -153,7 +155,7 @@ export async function injectControlPanel({
         id: 'leetforces-classic-btn',
         type: 'button',
         class: 'lf-btn'
-    }, 'Classic CF');
+    }, 'Exit');
     topRight.appendChild(classicBtn);
     top.appendChild(topLeft);
     top.appendChild(topRight);
@@ -437,15 +439,24 @@ export async function injectControlPanel({
     const consolePane = el(doc, 'div', {
         id: 'leetforces-console',
         style: `
-            flex:0 0 34%; min-height:140px; max-height:42%; overflow:auto;
-            border-top:1px solid var(--lf-border); background:var(--lf-surface); padding:12px 14px;
+            flex:0 0 0px; max-height:0; overflow:hidden;
+            border-top:0 solid var(--lf-border); background:var(--lf-surface); padding:0 14px;
+            transition:flex-basis 150ms ease, max-height 150ms ease, padding 150ms ease;
         `
     });
     consolePane.appendChild(el(doc, 'div', {
-        style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:6px;'
+        style: 'font-size:11px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:var(--lf-muted-foreground); margin-bottom:6px; padding-top:12px;'
     }, 'Console'));
     const verdictEl = el(doc, 'div', { id: 'leetforces-verdict-panel' });
     consolePane.appendChild(verdictEl);
+
+    /** Reveals the console pane the first time it's actually needed (on Submit). */
+    const revealConsole = () => {
+        consolePane.style.cssText = `
+            flex:0 0 34%; min-height:140px; max-height:42%; overflow:auto;
+            border-top:1px solid var(--lf-border); background:var(--lf-surface); padding:12px 14px;
+        `;
+    };
 
     right.appendChild(toolbar);
     right.appendChild(codeEditorMount);
@@ -477,7 +488,7 @@ export async function injectControlPanel({
     /** Resolves the code + language family that should be loaded right now. */
     const resolveCodeForCurrentLanguage = async () => {
         const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-        const langTitle = (opt && opt.text) || DEFAULT_LANG;
+        const langTitle = (opt && (opt.getAttribute('data-full-title') || opt.text)) || DEFAULT_LANG;
         const languageFamily = getLanguageFamily(langTitle) || 'C++';
 
         let code = '';
@@ -513,7 +524,8 @@ export async function injectControlPanel({
     langSelect.addEventListener('change', async () => {
         try {
             const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-            if (opt && opt.text) savePreferredLanguage(opt.text);
+            const fullTitle = opt && (opt.getAttribute('data-full-title') || opt.text);
+            if (fullTitle) savePreferredLanguage(fullTitle);
         } catch (_) { /* ignore */ }
 
         const resolved = await resolveCodeForCurrentLanguage();
@@ -545,7 +557,7 @@ export async function injectControlPanel({
     const getSelectedLangTitle = () => {
         try {
             const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-            return (opt && opt.text) || DEFAULT_LANG;
+            return (opt && (opt.getAttribute('data-full-title') || opt.text)) || DEFAULT_LANG;
         } catch (_) {
             return DEFAULT_LANG;
         }
@@ -584,6 +596,12 @@ export async function injectControlPanel({
 
             showVerdict({ statusKey: 'TESTING', formattedText: 'Submitting to Codeforces…' });
 
+            // Captured BEFORE the POST so the poller can reject any
+            // submission older than this moment — the safety net that
+            // stops an old verdict for this problem from ever being
+            // reported as if it belonged to this new attempt.
+            const submitStartedAtSeconds = Math.floor(Date.now() / 1000);
+
             const result = await submitSolution(sourceCode, getSelectedLangTitle());
             if (!result || !result.success) {
                 verdictEl.innerHTML = buildInlineAlert('error', `Submission failed: ${(result && result.error) || 'unknown error'}`);
@@ -599,6 +617,7 @@ export async function injectControlPanel({
             if (typeof pollVerdict === 'function') {
                 await pollVerdict({
                     submissionId: result.submissionId,
+                    minCreationTimeSeconds: submitStartedAtSeconds,
                     onUpdate: (verdictData) => showVerdict(verdictData)
                 });
             }

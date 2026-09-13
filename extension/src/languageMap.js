@@ -184,7 +184,8 @@ export function populateLanguageSelector(selectElement, availableLanguages = [],
         for (const [name, id] of Object.entries(KNOWN_COMPILER_MAP)) {
             const opt = doc.createElement('option');
             opt.value = id;
-            opt.textContent = name;
+            opt.textContent = getLanguageFamily(name) || name;
+            opt.setAttribute('data-full-title', name);
             if (id === resolvedId) opt.selected = true;
             selectElement.appendChild(opt);
         }
@@ -194,7 +195,12 @@ export function populateLanguageSelector(selectElement, availableLanguages = [],
     filteredLanguages.forEach(lang => {
         const opt = doc.createElement('option');
         opt.value = lang.value;
-        opt.textContent = lang.title;
+        // Show a short family name ("C++", "Java") in the UI, but keep the
+        // real full compiler title available for resolveLanguageId — that
+        // matching logic depends on strings like "G++"/"Mono", which a
+        // shortened label would break.
+        opt.textContent = getLanguageFamily(lang.title) || lang.title;
+        opt.setAttribute('data-full-title', lang.title);
         if (String(lang.value) === String(resolvedId)) {
             opt.selected = true;
         }

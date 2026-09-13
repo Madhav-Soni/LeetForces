@@ -147,6 +147,52 @@ assert.strictEqual(pollResult.statusKey, 'ACCEPTED');
 assert.strictEqual(pollResult.isTesting, false);
 console.log('  [PASS] Verdict poller queries contest.status API anonymously.');
 
+// 6b. Regression test: an OLD accepted submission for the same problem
+// must never be reported as the result of a NEW submission attempt, even
+// when submissionId extraction fails (the real bug this fixes — see
+// verdictPoller.js's minCreationTimeSeconds safety net).
+console.log('\nTest 7b: Validating Old-Submission Safety Net (regression guard)...');
+let staleCallCount = 0;
+const staleFetch = async () => {
+    staleCallCount++;
+    // Only an OLD submission exists in this mock — simulates the exact
+    // failure mode: ID extraction failed (submissionId is null below),
+    // and the only candidate for this problem is from before the new
+    // submit attempt even happened.
+    return {
+        ok: true,
+        json: async () => ({
+            status: 'OK',
+            result: [
+                {
+                    id: 11111111,
+                    contestId: 1234,
+                    problem: { index: 'A' },
+                    verdict: 'OK',
+                    passedTestCount: 5,
+                    creationTimeSeconds: 1000, // long before the new attempt
+                    timeConsumedMillis: 62,
+                    memoryConsumedBytes: 100000
+                }
+            ]
+        })
+    };
+};
+
+const staleResult = await pollVerdictForSubmission({
+    contestId: 1234,
+    submissionId: null, // simulates failed ID extraction — the real trigger
+    problemIndex: 'A',
+    minCreationTimeSeconds: 5000, // new attempt started well after the old submission
+    intervalMs: 10,
+    maxAttempts: 2,
+    fetchImpl: staleFetch
+});
+
+assert.notStrictEqual(staleResult.statusKey, 'ACCEPTED', 'Must NOT report the old submission\'s Accepted verdict as the new attempt\'s result');
+assert.strictEqual(staleResult.statusKey, 'UNKNOWN', 'Should report UNKNOWN rather than silently reusing a stale verdict');
+console.log('  [PASS] Old submissions for the same problem are correctly rejected, never mistaken for a new attempt.');
+
 // 7. Verify Prompt 7: Verdict UI Themes
 console.log('\nTest 8: Validating Verdict UI Themes & Color Coding...');
 const themeAccepted = getVerdictTheme('ACCEPTED');

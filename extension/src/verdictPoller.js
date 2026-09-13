@@ -160,10 +160,23 @@ export async function fetchContestSubmissions(contestId, fetchImpl = (typeof fet
 
 /**
  * Polls Codeforces API anonymously for verdict of a specific submission.
- * @param {object} options 
- * @param {string|number} [options.submissionId] - Submission ID to match
+ *
+ * Submission ID extraction after an AJAX-style POST to Codeforces is
+ * unreliable (CF often doesn't return anything parseable), so submissionId
+ * frequently comes back null. When that happens, a naive "match by problem
+ * index" fallback is dangerous: it can silently grab an OLD submission for
+ * the same problem — including a genuinely correct one from earlier
+ * testing — and report its terminal verdict as if it belonged to the new
+ * attempt. To prevent that, every match (ID-based or fallback) is required
+ * to have been created at or after `minCreationTimeSeconds` (captured right
+ * before the submit POST was sent). A submission older than that is never
+ * treated as a match, no matter what.
+ *
+ * @param {object} options
+ * @param {string|number} [options.submissionId] - Submission ID to match, if known
  * @param {string|number} [options.contestId] - Contest ID
  * @param {string} [options.problemIndex] - Problem Index fallback
+ * @param {number} [options.minCreationTimeSeconds] - Unix seconds; matches older than this are rejected
  * @param {number} [options.intervalMs] - Polling interval in ms (default 2000)
  * @param {number} [options.maxAttempts] - Maximum polling attempts (default 30)
  * @param {function} [options.onUpdate] - Callback function invoked on each status check
@@ -175,11 +188,19 @@ export async function pollVerdictForSubmission(options = {}) {
         submissionId,
         contestId,
         problemIndex,
+        minCreationTimeSeconds = 0,
         intervalMs = 2000,
         maxAttempts = 30,
         onUpdate,
         fetchImpl = (typeof fetch !== 'undefined' ? fetch : null)
     } = options;
+
+    // Small grace window: clocks/latency between our capture and CF's own
+    // timestamp aren't perfectly synced, so allow a few seconds of slack
+    // rather than a hard cutoff that could reject the real new submission.
+    const cutoff = minCreationTimeSeconds > 0 ? minCreationTimeSeconds - 5 : 0;
+
+    const isRecentEnough = (sub) => cutoff === 0 || (sub.creationTimeSeconds || 0) >= cutoff;
 
     let attempts = 0;
 
@@ -191,22 +212,53 @@ export async function pollVerdictForSubmission(options = {}) {
             let matchedSub = null;
 
             if (submissionId) {
-                matchedSub = submissions.find(s => String(s.id) === String(submissionId));
+                const byId = submissions.find(s => String(s.id) === String(submissionId));
+                if (byId && isRecentEnough(byId)) matchedSub = byId;
             }
 
             if (!matchedSub && problemIndex) {
-                matchedSub = submissions.find(s => 
-                    s.problem && String(s.problem.index).toUpperCase() === String(problemIndex).toUpperCase()
-                );
+                matchedSub = submissions.find(s =>
+                    s.problem &&
+                    String(s.problem.index).toUpperCase() === String(problemIndex).toUpperCase() &&
+                    isRecentEnough(s)
+                ) || null;
             }
 
-            if (!matchedSub && submissions.length > 0) {
-                matchedSub = submissions[0];
+            // No unconditional "just take submissions[0]" fallback anymore —
+            // an unmatched, unverified submission is never reported as if
+            // it were this attempt's real result. If nothing recent enough
+            // has shown up yet, keep polling instead.
+
+            if (!matchedSub) {
+                const formatted = {
+                    statusKey: 'TESTING',
+                    formattedText: 'In Queue...',
+                    testCaseNumber: null,
+                    isTesting: true,
+                    timeMs: 0,
+                    memoryBytes: 0,
+                    rawVerdict: null,
+                    attempts,
+                    submissionId: submissionId || null
+                };
+                if (typeof onUpdate === 'function') onUpdate(formatted);
+
+                if (attempts >= maxAttempts) {
+                    resolve({
+                        ...formatted,
+                        statusKey: 'UNKNOWN',
+                        formattedText: 'Could not confirm verdict — check Codeforces directly',
+                        isTesting: false
+                    });
+                } else {
+                    setTimeout(checkStatus, intervalMs);
+                }
+                return;
             }
 
             const formatted = formatVerdict(matchedSub);
             formatted.attempts = attempts;
-            formatted.submissionId = matchedSub ? matchedSub.id : submissionId;
+            formatted.submissionId = matchedSub.id;
 
             if (typeof onUpdate === 'function') {
                 onUpdate(formatted);
