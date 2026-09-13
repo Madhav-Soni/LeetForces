@@ -488,7 +488,12 @@ export async function injectControlPanel({
     /** Resolves the code + language family that should be loaded right now. */
     const resolveCodeForCurrentLanguage = async () => {
         const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-        const langTitle = (opt && (opt.getAttribute('data-full-title') || opt.text)) || DEFAULT_LANG;
+        // In mock tests `opt` may lack setAttribute/getAttribute; fall back to property.
+        const langTitle = (opt && (
+            (typeof opt.getAttribute === 'function' && opt.getAttribute('data-full-title')) ||
+            opt['data-full-title'] ||
+            opt.text
+        )) || DEFAULT_LANG;
         const languageFamily = getLanguageFamily(langTitle) || 'C++';
 
         let code = '';
@@ -524,7 +529,11 @@ export async function injectControlPanel({
     langSelect.addEventListener('change', async () => {
         try {
             const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-            const fullTitle = opt && (opt.getAttribute('data-full-title') || opt.text);
+            const fullTitle = opt && (
+                (typeof opt.getAttribute === 'function' && opt.getAttribute('data-full-title')) ||
+                opt['data-full-title'] ||
+                opt.text
+            );
             if (fullTitle) savePreferredLanguage(fullTitle);
         } catch (_) { /* ignore */ }
 
@@ -557,7 +566,12 @@ export async function injectControlPanel({
     const getSelectedLangTitle = () => {
         try {
             const opt = langSelect.options && langSelect.options[langSelect.selectedIndex];
-            return (opt && (opt.getAttribute('data-full-title') || opt.text)) || DEFAULT_LANG;
+            // Retrieve full title safely for both real DOM and mock objects
+            return (opt && (
+                (typeof opt.getAttribute === 'function' && opt.getAttribute('data-full-title')) ||
+                opt['data-full-title'] ||
+                opt.text
+            )) || DEFAULT_LANG;
         } catch (_) {
             return DEFAULT_LANG;
         }

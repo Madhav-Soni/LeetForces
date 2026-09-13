@@ -185,7 +185,13 @@ export function populateLanguageSelector(selectElement, availableLanguages = [],
             const opt = doc.createElement('option');
             opt.value = id;
             opt.textContent = getLanguageFamily(name) || name;
-            opt.setAttribute('data-full-title', name);
+            // Safely set custom data attribute for both real DOM and mock environments
+            if (typeof opt.setAttribute === 'function') {
+                opt.setAttribute('data-full-title', name);
+            } else {
+                // Fallback for mock option objects used in tests
+                opt['data-full-title'] = name;
+            }
             if (id === resolvedId) opt.selected = true;
             selectElement.appendChild(opt);
         }
@@ -200,7 +206,12 @@ export function populateLanguageSelector(selectElement, availableLanguages = [],
         // matching logic depends on strings like "G++"/"Mono", which a
         // shortened label would break.
         opt.textContent = getLanguageFamily(lang.title) || lang.title;
-        opt.setAttribute('data-full-title', lang.title);
+        // Safely set custom data attribute for both real DOM and mock environments
+        if (typeof opt.setAttribute === 'function') {
+            opt.setAttribute('data-full-title', lang.title);
+        } else {
+            opt['data-full-title'] = lang.title;
+        }
         if (String(lang.value) === String(resolvedId)) {
             opt.selected = true;
         }
